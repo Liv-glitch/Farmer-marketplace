@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -16,6 +17,7 @@ import {
   CheckCircle2,
   Clock3,
   CreditCard,
+  EyeOff,
   FileClock,
   History,
   Leaf,
@@ -56,6 +58,7 @@ type Booking = {
   payment_requested_at: string | null;
   received_confirmed_at: string | null;
   final_price: number | null;
+  quantity_received: number | null;
   delivery_date: string | null;
   buyer_rating: number | null;
   farmers: { full_name: string; county: string; phone_number: string; potato_variety: string; farmer_id?: string | null } | null;
@@ -76,6 +79,7 @@ const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString("en-GB
 
 const statusVariant = (status: string) => status === "confirmed" || status === "resolved" ? "default" : status === "rejected" ? "destructive" : "secondary";
 const prettyStatus = (status: string) => status.replace(/_/g, " ");
+const canViewContact = (booking: Booking) => booking.booking_status === "confirmed" || booking.payment_status === "paid";
 const buyerStatusLabel = (booking: Booking) => {
   if (booking.booking_status === "pending_approval") return "Pending farmer confirmation";
   if (booking.booking_status === "approved") return "Farmer confirmed. Complete payment";
@@ -93,7 +97,7 @@ export default function BuyerDashboard() {
   const [historicalBookings, setHistoricalBookings] = useState<Booking[]>([]);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [receiptBooking, setReceiptBooking] = useState<Booking | null>(null);
-  const [receiptForm, setReceiptForm] = useState({ finalPrice: "", deliveryDate: "", rating: "5" });
+  const [receiptForm, setReceiptForm] = useState({ finalPrice: "", quantityReceived: "", deliveryDate: "", rating: "5" });
   const [receiptSaving, setReceiptSaving] = useState(false);
   const [complaintForm, setComplaintForm] = useState({ bookingId: "none", subject: "", content: "" });
   const [complaintSaving, setComplaintSaving] = useState(false);
@@ -133,6 +137,7 @@ export default function BuyerDashboard() {
     setReceiptBooking(booking);
     setReceiptForm({
       finalPrice: String(booking.total_amount ?? booking.acres_booked * booking.price_per_acre),
+      quantityReceived: booking.quantity_received ? String(booking.quantity_received) : "",
       deliveryDate: new Date().toISOString().slice(0, 10),
       rating: "5",
     });
@@ -151,6 +156,7 @@ export default function BuyerDashboard() {
         buyer_id: buyerId,
         booking_id: receiptBooking.id,
         final_price: Number(receiptForm.finalPrice),
+        quantity_received: Number(receiptForm.quantityReceived),
         delivery_date: receiptForm.deliveryDate,
         buyer_rating: Number(receiptForm.rating),
       },
@@ -164,6 +170,21 @@ export default function BuyerDashboard() {
     setReceiptBooking(null);
     await loadDashboard();
   };
+
+  const HiddenContact = ({ label }: { label: string }) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="mt-1 inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+          tabIndex={0}
+          aria-label={label}
+        >
+          <EyeOff className="h-4 w-4" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
 
   const submitComplaint = async () => {
     const validationError = validateComplaint(complaintForm.subject, complaintForm.content);
@@ -260,13 +281,21 @@ export default function BuyerDashboard() {
 
                 <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
                   <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs font-medium uppercase tracking-wide text-slate-500">County</div><div className="mt-1 font-medium text-slate-900">{booking.farmers?.county || "-"}</div></div>
-                  <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs font-medium uppercase tracking-wide text-slate-500">Phone</div><div className="mt-1 font-medium text-slate-900">{booking.farmers?.phone_number || "-"}</div></div>
+                  <div className="rounded-lg bg-slate-50 p-3">
+                    <div className="text-xs font-medium uppercase tracking-wide text-slate-500">Phone</div>
+                    {canViewContact(booking) ? (
+                      <div className="mt-1 font-medium text-slate-900">{booking.farmers?.phone_number || "-"}</div>
+                    ) : (
+                      <HiddenContact label="Farmer phone will be revealed once the booking is confirmed." />
+                    )}
+                  </div>
                   <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs font-medium uppercase tracking-wide text-slate-500">Variety</div><div className="mt-1 font-medium text-slate-900">{booking.farmers?.potato_variety || "-"}</div></div>
                   <div className="rounded-lg bg-amber-50 p-3"><div className="text-xs font-medium uppercase tracking-wide text-amber-700">Booked Total</div><div className="mt-1 font-semibold text-slate-950">{fmtKES(booking.total_amount ?? booking.acres_booked * booking.price_per_acre)}</div></div>
                   <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs font-medium uppercase tracking-wide text-slate-500">Acres</div><div className="mt-1 font-medium text-slate-900">{booking.acres_booked}</div></div>
                   <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs font-medium uppercase tracking-wide text-slate-500">Created</div><div className="mt-1 font-medium text-slate-900">{fmtDate(booking.created_at)}</div></div>
                   {booking.received_confirmed_at && <div className="rounded-lg bg-emerald-50 p-3"><div className="text-xs font-medium uppercase tracking-wide text-emerald-700">Received</div><div className="mt-1 font-medium text-slate-900">{fmtDate(booking.received_confirmed_at)}</div></div>}
                   {booking.final_price && <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs font-medium uppercase tracking-wide text-slate-500">Final Price</div><div className="mt-1 font-semibold text-slate-950">{fmtKES(booking.final_price)}</div></div>}
+                  {booking.quantity_received && <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs font-medium uppercase tracking-wide text-slate-500">Quantity Received</div><div className="mt-1 font-medium text-slate-900">{Number(booking.quantity_received).toLocaleString()}</div></div>}
                   {booking.delivery_date && <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs font-medium uppercase tracking-wide text-slate-500">Delivery Date</div><div className="mt-1 font-medium text-slate-900">{fmtDate(booking.delivery_date)}</div></div>}
                   {booking.buyer_rating && <div className="rounded-lg bg-slate-50 p-3"><div className="text-xs font-medium uppercase tracking-wide text-slate-500">Rating</div><div className="mt-1 flex items-center gap-1 font-medium text-slate-900"><Star className="h-4 w-4 fill-amber-400 text-amber-400" /> {booking.buyer_rating}/5</div></div>}
                 </div>
@@ -444,6 +473,7 @@ export default function BuyerDashboard() {
           <div className="space-y-4">
             <div className="text-sm text-muted-foreground">Confirm the delivered final price, delivery date, and your rating for this booking.</div>
             <div className="space-y-2"><Label>Final Price</Label><Input type="number" min="1" step="0.01" value={receiptForm.finalPrice} onChange={(e) => setReceiptForm((current) => ({ ...current, finalPrice: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>Quantity Received</Label><Input type="number" min="1" step="0.01" value={receiptForm.quantityReceived} onChange={(e) => setReceiptForm((current) => ({ ...current, quantityReceived: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Delivery Date</Label><Input type="date" value={receiptForm.deliveryDate} onChange={(e) => setReceiptForm((current) => ({ ...current, deliveryDate: e.target.value }))} /></div>
             <div className="space-y-2"><Label>Rating</Label><Input type="number" min="1" max="5" step="1" value={receiptForm.rating} onChange={(e) => setReceiptForm((current) => ({ ...current, rating: e.target.value }))} /></div>
             <Button className="w-full" onClick={confirmReceived} disabled={receiptSaving}>{receiptSaving ? "Confirming..." : "Confirm Received"}</Button>

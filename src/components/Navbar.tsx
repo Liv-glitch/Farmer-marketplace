@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { getSession, signOut } from "@/lib/auth";
+import { getSession, roleHome, signOut } from "@/lib/auth";
 
 const Navbar = () => {
   const navigate = useNavigate();
@@ -11,6 +11,7 @@ const Navbar = () => {
         <Link to="/" className="flex items-center gap-3"><img src="/logo.svg" alt="PotatoMarket logo" className="h-10 w-10 object-contain"/><span className="font-display text-xl font-bold text-foreground">PotatoMarket</span></Link>
         <div className="flex items-center gap-3">
           <Button variant="ghost" onClick={() => navigate("/marketplace")}>Marketplace</Button>
+          {session && <Button variant="ghost" onClick={() => navigate(roleHome(session.role))}>Dashboard</Button>}
           <Button variant="outline" onClick={() => navigate("/register-farmer")}>Register as Farmer</Button>
           <Button variant="outline" onClick={() => navigate("/register-buyer")}>Register as Buyer</Button>
           {session ? <Button variant="destructive" onClick={async () => { await signOut(); navigate('/login'); }}>Logout</Button> : <Button onClick={()=>navigate('/login')}>Login</Button>}

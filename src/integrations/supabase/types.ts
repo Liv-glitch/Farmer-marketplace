@@ -53,6 +53,7 @@ export type Database = {
           payment_requested_at: string | null
           payment_status: Database["public"]["Enums"]["payment_status"]
           price_per_acre: number
+          quantity_received: number | null
           received_confirmed_at: string | null
           source: string
           total_amount: number | null
@@ -75,6 +76,7 @@ export type Database = {
           payment_requested_at?: string | null
           payment_status?: Database["public"]["Enums"]["payment_status"]
           price_per_acre?: number
+          quantity_received?: number | null
           received_confirmed_at?: string | null
           source?: string
           total_amount?: number | null
@@ -97,6 +99,7 @@ export type Database = {
           payment_requested_at?: string | null
           payment_status?: Database["public"]["Enums"]["payment_status"]
           price_per_acre?: number
+          quantity_received?: number | null
           received_confirmed_at?: string | null
           source?: string
           total_amount?: number | null

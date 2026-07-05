@@ -271,7 +271,7 @@ Deno.serve(async (req) => {
     if (!buyer_id) return j({ error: "Missing buyer_id" }, 400);
     const { data, error } = await db
       .from("bookings")
-      .select("id, acres_booked, price_per_acre, total_amount, payment_status, booking_status, created_at, farmer_confirmed_at, payment_requested_at, received_confirmed_at, final_price, delivery_date, buyer_rating, farmers(full_name, county, phone_number, potato_variety)")
+      .select("id, acres_booked, price_per_acre, total_amount, payment_status, booking_status, created_at, farmer_confirmed_at, payment_requested_at, received_confirmed_at, final_price, quantity_received, delivery_date, buyer_rating, farmers(full_name, county, phone_number, potato_variety)")
       .eq("buyer_id", buyer_id)
       .order("created_at", { ascending: false });
     if (error) return j({ error: error.message }, 400);
@@ -288,7 +288,7 @@ Deno.serve(async (req) => {
 
     const { data: bookings, error: bookingsError } = await db
       .from("bookings")
-      .select("id, acres_booked, price_per_acre, total_amount, payment_status, booking_status, created_at, farmer_confirmed_at, payment_requested_at, received_confirmed_at, final_price, delivery_date, buyer_rating, farmers(full_name, county, phone_number, potato_variety, farmer_id)")
+      .select("id, acres_booked, price_per_acre, total_amount, payment_status, booking_status, created_at, farmer_confirmed_at, payment_requested_at, received_confirmed_at, final_price, quantity_received, delivery_date, buyer_rating, farmers(full_name, county, phone_number, potato_variety, farmer_id)")
       .eq("buyer_id", buyer_id)
       .order("created_at", { ascending: false });
     if (bookingsError) return j({ error: bookingsError.message }, 400);
@@ -313,12 +313,14 @@ Deno.serve(async (req) => {
   }
 
   if (path === "/buyer/booking/confirm-received" && req.method === "POST") {
-    const { buyer_id, booking_id, final_price, delivery_date, buyer_rating } = await req.json();
+    const { buyer_id, booking_id, final_price, quantity_received, delivery_date, buyer_rating } = await req.json();
     if (!buyer_id || !booking_id) return j({ error: "Missing buyer_id or booking_id" }, 400);
 
     const price = Number(final_price);
+    const quantityReceived = Number(quantity_received);
     const rating = Number(buyer_rating);
     if (!Number.isFinite(price) || price <= 0) return j({ error: "Final price must be greater than 0" }, 400);
+    if (!Number.isFinite(quantityReceived) || quantityReceived <= 0) return j({ error: "Quantity received must be greater than 0" }, 400);
     if (!isValidDate(delivery_date)) return j({ error: "Delivery date must be a valid date" }, 400);
     if (!Number.isInteger(rating) || rating < 1 || rating > 5) return j({ error: "Rating must be between 1 and 5" }, 400);
 
@@ -337,13 +339,14 @@ Deno.serve(async (req) => {
       .from("bookings")
       .update({
         final_price: price,
+        quantity_received: quantityReceived,
         delivery_date,
         buyer_rating: rating,
         received_confirmed_at: new Date().toISOString(),
       })
       .eq("id", booking_id)
       .eq("buyer_id", buyer_id)
-      .select("id, received_confirmed_at, final_price, delivery_date, buyer_rating")
+      .select("id, received_confirmed_at, final_price, quantity_received, delivery_date, buyer_rating")
       .single();
     if (error) return j({ error: error.message }, 400);
     await notifyBookingLifecycle(db, booking_id, "booking_received");

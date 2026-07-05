@@ -11,13 +11,16 @@ export const splitBuyerBookings = <T extends BookingLike>(bookings: T[]) => ({
 
 export const validateReceiptConfirmation = (input: {
   finalPrice: string | number;
+  quantityReceived: string | number;
   deliveryDate: string;
   rating: string | number;
 }) => {
   const finalPrice = Number(input.finalPrice);
+  const quantityReceived = Number(input.quantityReceived);
   const rating = Number(input.rating);
 
   if (!Number.isFinite(finalPrice) || finalPrice <= 0) return "Final price must be greater than 0.";
+  if (!Number.isFinite(quantityReceived) || quantityReceived <= 0) return "Quantity received must be greater than 0.";
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.deliveryDate)) return "Delivery date is required.";
   if (!Number.isInteger(rating) || rating < 1 || rating > 5) return "Rating must be between 1 and 5.";
   return null;
