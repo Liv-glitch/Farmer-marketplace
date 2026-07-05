@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { EyeOff } from "lucide-react";
 import { toast } from "sonner";
 
 type Booking = {
@@ -38,6 +40,7 @@ type FarmerSummary = {
 
 const fmtKES = (n: number) => `KES ${Number(n).toLocaleString()}`;
 const fmtDate = (d: string) => new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+const canViewContact = (booking: Booking) => booking.booking_status === "confirmed" || booking.payment_status === "paid";
 const farmerBookingStatus = (booking: Booking) => {
   if (booking.booking_status === "pending_approval") return "Pending farmer confirmation";
   if (booking.booking_status === "approved") return "Pending buyer confirmation";
@@ -83,6 +86,21 @@ export default function FarmerDashboard() {
     toast.success(decision === "approve" ? "Availability confirmed" : "Booking rejected");
     await loadDashboard();
   };
+
+  const HiddenContact = ({ label }: { label: string }) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+          tabIndex={0}
+          aria-label={label}
+        >
+          <EyeOff className="h-4 w-4" />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
 
   const statusBadge = () => {
     if (farmer?.registration_status === "pending") return <Badge className="bg-amber-500 hover:bg-amber-500 text-white">Pending Approval</Badge>;
@@ -168,8 +186,8 @@ export default function FarmerDashboard() {
                     <CollapsibleTrigger asChild><Button variant="outline" size="sm">View Buyer Details</Button></CollapsibleTrigger>
                     <CollapsibleContent className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm border-t pt-3">
                       <div><div className="text-muted-foreground">Buyer Name</div><div>{r.buyers?.buyer_name ?? "—"}</div></div>
-                      <div><div className="text-muted-foreground">Phone</div><div>{r.buyers?.phone_number ?? "—"}</div></div>
-                      <div><div className="text-muted-foreground">Email</div><div>{r.buyers?.email ?? "—"}</div></div>
+                      <div><div className="text-muted-foreground">Phone</div><div>{canViewContact(r) ? r.buyers?.phone_number ?? "—" : <HiddenContact label="Buyer contact details will be revealed once the booking is confirmed." />}</div></div>
+                      <div><div className="text-muted-foreground">Email</div><div>{canViewContact(r) ? r.buyers?.email ?? "—" : <HiddenContact label="Buyer contact details will be revealed once the booking is confirmed." />}</div></div>
                       <div><div className="text-muted-foreground">County</div><div>{r.buyers?.county ?? "—"}</div></div>
                     </CollapsibleContent>
                   </Collapsible>

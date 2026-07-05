@@ -17,10 +17,12 @@ describe("buyer dashboard helpers", () => {
   });
 
   it("validates receipt confirmation fields", () => {
-    expect(validateReceiptConfirmation({ finalPrice: "15000", deliveryDate: "2026-05-27", rating: "5" })).toBeNull();
-    expect(validateReceiptConfirmation({ finalPrice: "0", deliveryDate: "2026-05-27", rating: "5" })).toMatch(/Final price/);
-    expect(validateReceiptConfirmation({ finalPrice: "15000", deliveryDate: "", rating: "5" })).toMatch(/Delivery date/);
-    expect(validateReceiptConfirmation({ finalPrice: "15000", deliveryDate: "2026-05-27", rating: "6" })).toMatch(/Rating/);
+    expect(validateReceiptConfirmation({ finalPrice: "15000", quantityReceived: "25", deliveryDate: "2026-05-27", rating: "5" })).toBeNull();
+    expect(validateReceiptConfirmation({ finalPrice: "0", quantityReceived: "25", deliveryDate: "2026-05-27", rating: "5" })).toMatch(/Final price/);
+    expect(validateReceiptConfirmation({ finalPrice: "15000", quantityReceived: "0", deliveryDate: "2026-05-27", rating: "5" })).toMatch(/Quantity received/);
+    expect(validateReceiptConfirmation({ finalPrice: "15000", quantityReceived: "abc", deliveryDate: "2026-05-27", rating: "5" })).toMatch(/Quantity received/);
+    expect(validateReceiptConfirmation({ finalPrice: "15000", quantityReceived: "25", deliveryDate: "", rating: "5" })).toMatch(/Delivery date/);
+    expect(validateReceiptConfirmation({ finalPrice: "15000", quantityReceived: "25", deliveryDate: "2026-05-27", rating: "6" })).toMatch(/Rating/);
   });
 
   it("validates complaint subject and content", () => {
