@@ -10,6 +10,7 @@ import { getSession } from "@/lib/auth";
 import { KENYA_COUNTIES, POTATO_VARIETIES } from "@/data/kenyaLocations";
 
 type Profile = {
+  id?: string; farmer_id?: string | null;
   full_name: string; phone_number: string; email: string;
   county: string; ward: string; specific_location: string;
   potato_variety: string; acreage_planted: number | string;
@@ -19,6 +20,8 @@ export default function FarmerSettings() {
   const session = getSession();
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<Profile>({ full_name: "", phone_number: "", email: "", county: "", ward: "", specific_location: "", potato_variety: "", acreage_planted: "" });
+  const [farms, setFarms] = useState<Profile[]>([]);
+  const [selectedFarmId, setSelectedFarmId] = useState("");
   const [pMsg, setPMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [pSaving, setPSaving] = useState(false);
@@ -34,12 +37,18 @@ export default function FarmerSettings() {
       if (error || data?.error || !data?.data) {
         setLoadErr(data?.error || error?.message || "Could not load profile.");
       } else {
-        const profileData = data.data;
-        setProfile({
-          full_name: profileData.full_name ?? "", phone_number: profileData.phone_number ?? "", email: profileData.email ?? "",
-          county: profileData.county ?? "", ward: profileData.ward ?? "", specific_location: profileData.specific_location ?? "",
-          potato_variety: profileData.potato_variety ?? "", acreage_planted: profileData.acreage_planted ?? "",
-        });
+        const farmRows = ((data.farms || (data.data ? [data.data] : [])) as Profile[]);
+        setFarms(farmRows);
+        const profileData = farmRows[0] || data.data;
+        if (profileData) {
+          setSelectedFarmId(profileData.id || "");
+          setProfile({
+            id: profileData.id, farmer_id: profileData.farmer_id,
+            full_name: profileData.full_name ?? "", phone_number: profileData.phone_number ?? "", email: profileData.email ?? "",
+            county: profileData.county ?? "", ward: profileData.ward ?? "", specific_location: profileData.specific_location ?? "",
+            potato_variety: profileData.potato_variety ?? "", acreage_planted: profileData.acreage_planted ?? "",
+          });
+        }
       }
       setLoading(false);
     })();
@@ -49,12 +58,25 @@ export default function FarmerSettings() {
 
   const wards = profile.county ? KENYA_COUNTIES[profile.county] ?? [] : [];
 
+  const selectFarm = (farmId: string) => {
+    setSelectedFarmId(farmId);
+    const selected = farms.find((farm) => farm.id === farmId);
+    if (!selected) return;
+    setProfile({
+      id: selected.id, farmer_id: selected.farmer_id,
+      full_name: selected.full_name ?? "", phone_number: selected.phone_number ?? "", email: selected.email ?? "",
+      county: selected.county ?? "", ward: selected.ward ?? "", specific_location: selected.specific_location ?? "",
+      potato_variety: selected.potato_variety ?? "", acreage_planted: selected.acreage_planted ?? "",
+    });
+  };
+
   const saveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setPMsg(null); setPSaving(true);
     const { data, error } = await supabase.functions.invoke("api-auth/farmer/profile", {
       body: {
         farmer_id: session.userId,
+        farm_id: selectedFarmId,
         full_name: profile.full_name, phone_number: profile.phone_number,
         county: profile.county, ward: profile.ward, specific_location: profile.specific_location,
         potato_variety: profile.potato_variety, acreage_planted: Number(profile.acreage_planted),
@@ -93,6 +115,21 @@ export default function FarmerSettings() {
         <CardHeader><CardTitle>Profile</CardTitle></CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={saveProfile}>
+            {farms.length > 1 && (
+              <div className="space-y-2">
+                <Label>Farm Listing</Label>
+                <Select value={selectedFarmId} onValueChange={selectFarm}>
+                  <SelectTrigger><SelectValue placeholder="Select farm" /></SelectTrigger>
+                  <SelectContent>
+                    {farms.map((farm) => (
+                      <SelectItem key={farm.id} value={farm.id || ""}>
+                        {farm.farmer_id || "Farm"} - {farm.specific_location || farm.county || "Location pending"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="space-y-2"><Label>Full Name</Label><Input value={profile.full_name} onChange={(e) => setProfile({ ...profile, full_name: e.target.value })} required /></div>
             <div className="space-y-2"><Label>Phone Number</Label><Input value={profile.phone_number} onChange={(e) => setProfile({ ...profile, phone_number: e.target.value })} required /></div>
             <div className="space-y-2"><Label>Email</Label><Input value={profile.email} readOnly disabled /></div>

@@ -11,11 +11,55 @@ const j = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, 
 const authError = (error: string) => j({ ok: false, error });
 const gen = () => crypto.randomUUID() + crypto.randomUUID();
 const isEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+type Db = ReturnType<typeof sb>;
 
-async function isAdmin(db: ReturnType<typeof sb>, admin_id?: string) {
+async function isAdmin(db: Db, admin_id?: string) {
   if (!admin_id) return false;
   const { data } = await db.from("admins").select("id").eq("id", admin_id).maybeSingle();
   return Boolean(data);
+}
+
+async function ensureFarmerAccount(
+  db: Db,
+  account: { email: string; full_name?: string | null; phone_number?: string | null; password_hash?: string | null },
+) {
+  const normalizedEmail = account.email.trim().toLowerCase();
+  const { data: existing, error: existingErr } = await db
+    .from("farmer_accounts")
+    .select("id,email,password_hash,full_name,phone_number")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+  if (existingErr) throw existingErr;
+  if (existing) {
+    const updates: Record<string, unknown> = {};
+    if (!existing.full_name && account.full_name) updates.full_name = account.full_name;
+    if (!existing.phone_number && account.phone_number) updates.phone_number = account.phone_number;
+    if (!existing.password_hash && account.password_hash) updates.password_hash = account.password_hash;
+    if (Object.keys(updates).length > 0) {
+      const { data: updated, error: updateErr } = await db
+        .from("farmer_accounts")
+        .update(updates)
+        .eq("id", existing.id)
+        .select("id,email,password_hash,full_name,phone_number")
+        .single();
+      if (updateErr) throw updateErr;
+      return updated;
+    }
+    return existing;
+  }
+
+  const { data: created, error } = await db
+    .from("farmer_accounts")
+    .insert({
+      email: normalizedEmail,
+      full_name: account.full_name ?? null,
+      phone_number: account.phone_number ?? null,
+      password_hash: account.password_hash ?? null,
+    })
+    .select("id,email,password_hash,full_name,phone_number")
+    .single();
+  if (error) throw error;
+  return created;
 }
 
 const isValidDate = (value: unknown) => {
@@ -23,7 +67,7 @@ const isValidDate = (value: unknown) => {
   return !Number.isNaN(new Date(`${value}T00:00:00Z`).getTime());
 };
 
-async function notifyBookingLifecycle(db: ReturnType<typeof sb>, booking_id: string, event: string) {
+async function notifyBookingLifecycle(db: Db, booking_id: string, event: string) {
   const { data: booking, error } = await db
     .from("bookings")
     .select("id, payment_status, booking_status, total_amount, farmer_confirmed_at, payment_requested_at, received_confirmed_at, farmers(farmer_id, external_callback_url), buyers(buyer_name, company_name, phone_number, email, county)")
@@ -93,9 +137,16 @@ Deno.serve(async (req) => {
       return j({ token: gen(), role: "admin", userId: upserted.id, email: upserted.email });
     }
 
-    const { data: farmer } = await db.from("farmers").select("id,email,password_hash").eq("email", normalizedEmail).maybeSingle();
-    if (farmer && !farmer.password_hash) return authError("This farmer account does not have a password set. Please register again or contact support.");
-    if (farmer?.password_hash && await compare(pwd, farmer.password_hash)) return j({ token: gen(), role: "farmer", userId: farmer.id, email: farmer.email });
+    const { data: farmerAccount, error: farmerAccountError } = await db
+      .from("farmer_accounts")
+      .select("id,email,password_hash")
+      .eq("email", normalizedEmail)
+      .maybeSingle();
+    if (farmerAccountError) return j({ error: farmerAccountError.message }, 400);
+    if (farmerAccount && !farmerAccount.password_hash) return authError("This farmer account does not have a password set. Please register again or contact support.");
+    if (farmerAccount?.password_hash && await compare(pwd, farmerAccount.password_hash)) {
+      return j({ token: gen(), role: "farmer", userId: farmerAccount.id, email: farmerAccount.email });
+    }
 
     const { data: buyer } = await db.from("buyers").select("id,email,password_hash,account_status").eq("email", normalizedEmail).maybeSingle();
     if (buyer?.account_status === "pending_setup" && !buyer?.password_hash) return authError("Please complete your account setup via the link sent to your WhatsApp.");
@@ -121,8 +172,8 @@ Deno.serve(async (req) => {
     const normalizedEmail = String(user.email || "").trim().toLowerCase();
     if (!normalizedEmail || !isEmail(normalizedEmail)) return j({ error: "Google did not return a valid email address" }, 400);
 
-    const { data: farmer, error: farmerError } = await db
-      .from("farmers")
+    const { data: farmerAccount, error: farmerError } = await db
+      .from("farmer_accounts")
       .select("id,email")
       .eq("email", normalizedEmail)
       .maybeSingle();
@@ -135,10 +186,10 @@ Deno.serve(async (req) => {
       .maybeSingle();
     if (buyerError) return j({ error: buyerError.message }, 400);
 
-    if (farmer && buyer) {
+    if (farmerAccount && buyer) {
       return j({ error: "This Google email is linked to both a farmer and buyer account. Please contact support so we can resolve the duplicate account." });
     }
-    if (farmer) return j({ token: gen(), role: "farmer", userId: farmer.id, email: farmer.email });
+    if (farmerAccount) return j({ token: gen(), role: "farmer", userId: farmerAccount.id, email: farmerAccount.email });
     if (buyer) {
       if (buyer.account_status && buyer.account_status !== "active") {
         return j({ error: "Please complete your buyer account setup before signing in with Google." });
@@ -234,14 +285,37 @@ Deno.serve(async (req) => {
     if (pwd !== String(b.confirm_password)) return j({ error: "Passwords do not match" }, 400);
     if (!Number.isFinite(acreage) || acreage <= 0) return j({ error: "Acreage must be greater than 0" }, 400);
 
-    const { data: existing } = await db.from("farmers").select("id").eq("email", normalizedEmail).maybeSingle();
-    if (existing) return j({ error: "An account with this email already exists" }, 409);
+    const { data: existingAccount, error: accountLookupErr } = await db
+      .from("farmer_accounts")
+      .select("id,email,password_hash")
+      .eq("email", normalizedEmail)
+      .maybeSingle();
+    if (accountLookupErr) return j({ error: accountLookupErr.message }, 400);
+    if (existingAccount?.password_hash && !(await compare(pwd, existingAccount.password_hash))) {
+      return j({ error: "Invalid password for the existing farmer account" }, 401);
+    }
 
     const paymentStatus = b.payment_status === "paid" || b.payment_status === "promo_code" ? b.payment_status : "pending";
+    const passwordHash = existingAccount?.password_hash || await hash(pwd, 10);
+    const farmerAccount = existingAccount ?? await ensureFarmerAccount(db, {
+      email: normalizedEmail,
+      full_name: String(b.full_name).trim(),
+      phone_number: String(b.phone_number).trim(),
+      password_hash: passwordHash,
+    });
+    if (!existingAccount?.password_hash) {
+      await ensureFarmerAccount(db, {
+        email: normalizedEmail,
+        full_name: String(b.full_name).trim(),
+        phone_number: String(b.phone_number).trim(),
+        password_hash: passwordHash,
+      });
+    }
     const { error } = await db.from("farmers").insert({
       full_name: String(b.full_name).trim(),
       phone_number: String(b.phone_number).trim(),
       email: normalizedEmail,
+      farmer_account_id: farmerAccount.id,
       county: b.county,
       ward: b.ward,
       specific_location: b.specific_location,
@@ -252,7 +326,7 @@ Deno.serve(async (req) => {
       registration_status: "pending",
       listing_status: "pending_approval",
       registration_fee: paymentStatus === "promo_code" ? 0 : acreage * 2000,
-      password_hash: await hash(pwd, 10),
+      password_hash: passwordHash,
     });
     if (error) return j({ error: error.message }, 400);
     return j({ ok: true });
@@ -413,39 +487,90 @@ Deno.serve(async (req) => {
   if (path === "/farmer/profile/get" && req.method === "POST") {
     const { farmer_id } = await req.json();
     if (!farmer_id) return j({ error: "Missing farmer_id" }, 400);
-    const { data, error } = await db.from("farmers").select("full_name, phone_number, email, county, ward, specific_location, potato_variety, acreage_planted").eq("id", farmer_id).maybeSingle();
+    const { data: account, error: accountError } = await db
+      .from("farmer_accounts")
+      .select("id,email,full_name,phone_number")
+      .eq("id", farmer_id)
+      .maybeSingle();
+    if (accountError) return j({ error: accountError.message }, 400);
+    if (account) {
+      const { data: farms, error } = await db
+        .from("farmers")
+        .select("id, farmer_id, full_name, phone_number, email, county, ward, specific_location, potato_variety, acreage_planted, planting_date, registration_status, listing_status")
+        .eq("farmer_account_id", account.id)
+        .order("created_at", { ascending: true });
+      if (error) return j({ error: error.message }, 400);
+      return j({ data: farms?.[0] ?? null, account, farms: farms || [] });
+    }
+    const { data, error } = await db.from("farmers").select("id, farmer_id, full_name, phone_number, email, county, ward, specific_location, potato_variety, acreage_planted, planting_date, registration_status, listing_status").eq("id", farmer_id).maybeSingle();
     if (error) return j({ error: error.message }, 400);
-    return j({ data });
+    return j({ data, account: null, farms: data ? [data] : [] });
   }
 
   if (path === "/farmer/dashboard" && req.method === "POST") {
     const { farmer_id } = await req.json();
     if (!farmer_id) return j({ error: "Missing farmer_id" }, 400);
-    const { data: farmer, error: farmerError } = await db
-      .from("farmers")
-      .select("registration_status, listing_status, full_name, phone_number, email, county, ward, specific_location, potato_variety, acreage_planted, planting_date")
+    const { data: account, error: accountError } = await db
+      .from("farmer_accounts")
+      .select("id,email,full_name,phone_number")
       .eq("id", farmer_id)
       .maybeSingle();
+    if (accountError) return j({ error: accountError.message }, 400);
+
+    let farmsQuery = db
+      .from("farmers")
+      .select("id, farmer_id, registration_status, listing_status, full_name, phone_number, email, county, ward, specific_location, potato_variety, acreage_planted, planting_date")
+      .order("created_at", { ascending: true });
+    farmsQuery = account ? farmsQuery.eq("farmer_account_id", account.id) : farmsQuery.eq("id", farmer_id);
+
+    const { data: farms, error: farmerError } = await farmsQuery;
     if (farmerError) return j({ error: farmerError.message }, 400);
+    const farmRows = farms || [];
+    const farmIds = farmRows.map((farm) => farm.id);
+    if (farmIds.length === 0) return j({ account, farms: [], farmer: null, bookings: [] });
+
     const { data: bookings, error: bookingsError } = await db
       .from("bookings")
-      .select("id, acres_booked, total_amount, price_per_acre, payment_status, booking_status, created_at, farmer_confirmed_at, payment_requested_at, buyer_id, buyers(buyer_name, phone_number, email, county)")
-      .eq("farmer_id", farmer_id)
+      .select("id, farmer_id, acres_booked, total_amount, price_per_acre, payment_status, booking_status, created_at, farmer_confirmed_at, payment_requested_at, buyer_id, buyers(buyer_name, phone_number, email, county)")
+      .in("farmer_id", farmIds)
       .order("created_at", { ascending: false });
     if (bookingsError) return j({ error: bookingsError.message }, 400);
-    return j({ farmer, bookings: bookings || [] });
+    const bookingRows = bookings || [];
+    return j({
+      account,
+      farmer: farmRows[0] ?? null,
+      bookings: bookingRows,
+      farms: farmRows.map((farm) => ({
+        ...farm,
+        bookings: bookingRows.filter((booking) => booking.farmer_id === farm.id),
+      })),
+    });
   }
 
   if (path === "/farmer/booking/decision" && req.method === "POST") {
-    const { farmer_id, booking_id, decision } = await req.json();
+    const { farmer_id, farm_id, booking_id, decision } = await req.json();
     if (!farmer_id || !booking_id) return j({ error: "Missing farmer_id or booking_id" }, 400);
     if (decision !== "approve" && decision !== "reject") return j({ error: "decision must be approve or reject" }, 400);
+
+    let targetFarmId = String(farm_id || "").trim();
+    if (targetFarmId) {
+      const { data: farm, error: farmError } = await db
+        .from("farmers")
+        .select("id")
+        .eq("id", targetFarmId)
+        .eq("farmer_account_id", farmer_id)
+        .maybeSingle();
+      if (farmError) return j({ error: farmError.message }, 400);
+      if (!farm) return j({ error: "Farm not found for this account" }, 404);
+    } else {
+      targetFarmId = farmer_id;
+    }
 
     const { data: booking, error: fetchError } = await db
       .from("bookings")
       .select("id, farmer_id, booking_status, payment_status")
       .eq("id", booking_id)
-      .eq("farmer_id", farmer_id)
+      .eq("farmer_id", targetFarmId)
       .maybeSingle();
     if (fetchError) return j({ error: fetchError.message }, 400);
     if (!booking) return j({ error: "Booking not found" }, 404);
@@ -458,7 +583,7 @@ Deno.serve(async (req) => {
         .from("bookings")
         .update({ booking_status: "approved", farmer_confirmed_at: confirmedAt })
         .eq("id", booking_id)
-        .eq("farmer_id", farmer_id)
+        .eq("farmer_id", targetFarmId)
         .eq("booking_status", "pending_approval")
         .select("id, booking_status, payment_status, farmer_confirmed_at")
         .single();
@@ -471,7 +596,7 @@ Deno.serve(async (req) => {
       .from("bookings")
       .update({ booking_status: "rejected", payment_status: "rejected" })
       .eq("id", booking_id)
-      .eq("farmer_id", farmer_id)
+      .eq("farmer_id", targetFarmId)
       .eq("booking_status", "pending_approval")
       .select("id, booking_status, payment_status")
       .single();
@@ -479,7 +604,7 @@ Deno.serve(async (req) => {
     const { error: farmerErr } = await db
       .from("farmers")
       .update({ listing_status: "available" })
-      .eq("id", farmer_id)
+      .eq("id", targetFarmId)
       .eq("listing_status", "booked");
     if (farmerErr) return j({ error: farmerErr.message }, 400);
     await notifyBookingLifecycle(db, booking_id, "farmer_rejected");
@@ -488,16 +613,30 @@ Deno.serve(async (req) => {
 if (path === "/farmer/profile" && req.method === "GET") {
     const farmer_id = url.searchParams.get("farmer_id");
     if (!farmer_id) return j({ error: "Missing farmer_id" }, 400);
-    const { data, error } = await db.from("farmers").select("full_name, phone_number, email, county, ward, specific_location, potato_variety, acreage_planted").eq("id", farmer_id).maybeSingle();
+    const { data, error } = await db.from("farmers").select("id, farmer_id, full_name, phone_number, email, county, ward, specific_location, potato_variety, acreage_planted, planting_date, registration_status, listing_status").eq("id", farmer_id).maybeSingle();
     if (error) return j({ error: error.message }, 400);
     return j({ data });
   }
 
   if (path === "/farmer/profile" && (req.method === "PATCH" || req.method === "POST")) {
-    const { farmer_id, full_name, phone_number, county, ward, specific_location, potato_variety, acreage_planted } = await req.json();
+    const { farmer_id, farm_id, full_name, phone_number, county, ward, specific_location, potato_variety, acreage_planted } = await req.json();
     if (!farmer_id) return j({ error: "Missing farmer_id" }, 400);
-    const { error } = await db.from("farmers").update({ full_name, phone_number, county, ward, specific_location, potato_variety, acreage_planted }).eq("id", farmer_id);
+    const targetFarmId = String(farm_id || farmer_id).trim();
+    if (farm_id) {
+      const { data: farm, error: farmError } = await db
+        .from("farmers")
+        .select("id")
+        .eq("id", targetFarmId)
+        .eq("farmer_account_id", farmer_id)
+        .maybeSingle();
+      if (farmError) return j({ error: farmError.message }, 400);
+      if (!farm) return j({ error: "Farm not found for this account" }, 404);
+    }
+    const { error } = await db.from("farmers").update({ full_name, phone_number, county, ward, specific_location, potato_variety, acreage_planted }).eq("id", targetFarmId);
     if (error) return j({ error: error.message }, 400);
+    if (farm_id) {
+      await db.from("farmer_accounts").update({ full_name, phone_number }).eq("id", farmer_id);
+    }
     return j({ ok: true });
   }
 
@@ -505,9 +644,11 @@ if (path === "/farmer/profile" && req.method === "GET") {
     const { farmer_id, current_password, new_password } = await req.json();
     if (!farmer_id || !current_password || !new_password) return j({ error: "Missing fields" }, 400);
     if (String(new_password).length < 8) return j({ error: "New password must be at least 8 characters" }, 400);
-    const { data: farmer } = await db.from("farmers").select("password_hash").eq("id", farmer_id).maybeSingle();
-    if (!farmer?.password_hash || !(await compare(current_password, farmer.password_hash))) return j({ error: "Current password is incorrect" }, 401);
-    await db.from("farmers").update({ password_hash: await hash(new_password, 10) }).eq("id", farmer_id);
+    const { data: account } = await db.from("farmer_accounts").select("password_hash").eq("id", farmer_id).maybeSingle();
+    if (!account?.password_hash || !(await compare(current_password, account.password_hash))) return j({ error: "Current password is incorrect" }, 401);
+    const newHash = await hash(new_password, 10);
+    await db.from("farmer_accounts").update({ password_hash: newHash }).eq("id", farmer_id);
+    await db.from("farmers").update({ password_hash: newHash }).eq("farmer_account_id", farmer_id);
     return j({ ok: true });
   }
 
