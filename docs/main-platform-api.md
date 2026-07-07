@@ -76,6 +76,8 @@ Response:
 
 Registrations from the main platform are created with `payment_status = promo_code` and `registration_fee = 0`. If `external_platform_ref` already exists, the endpoint returns the existing farmer instead of creating a duplicate.
 
+If a new registration uses an email that already belongs to a farmer account, the platform keeps the same response contract and creates a new farm listing with a new `farmer_id`, linked internally to that farmer account. The `farmer_id` in this API continues to identify a farm/listing.
+
 ## Get Farmer
 
 ```http

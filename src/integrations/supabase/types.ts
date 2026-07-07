@@ -263,6 +263,36 @@ export type Database = {
         }
         Relationships: []
       }
+      farmer_accounts: {
+        Row: {
+          created_at: string
+          email: string
+          full_name: string | null
+          id: string
+          password_hash: string | null
+          phone_number: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          full_name?: string | null
+          id?: string
+          password_hash?: string | null
+          phone_number?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          full_name?: string | null
+          id?: string
+          password_hash?: string | null
+          phone_number?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
       farmers: {
         Row: {
           acreage_planted: number
@@ -271,6 +301,7 @@ export type Database = {
           email: string | null
           external_callback_url: string | null
           external_platform_ref: string | null
+          farmer_account_id: string | null
           farmer_id: string | null
           full_name: string
           id: string
@@ -293,6 +324,7 @@ export type Database = {
           email?: string | null
           external_callback_url?: string | null
           external_platform_ref?: string | null
+          farmer_account_id?: string | null
           farmer_id?: string | null
           full_name: string
           id?: string
@@ -315,6 +347,7 @@ export type Database = {
           email?: string | null
           external_callback_url?: string | null
           external_platform_ref?: string | null
+          farmer_account_id?: string | null
           farmer_id?: string | null
           full_name?: string
           id?: string
@@ -330,7 +363,15 @@ export type Database = {
           updated_at?: string
           ward?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "farmers_farmer_account_id_fkey"
+            columns: ["farmer_account_id"]
+            isOneToOne: false
+            referencedRelation: "farmer_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       user_roles: {
         Row: {

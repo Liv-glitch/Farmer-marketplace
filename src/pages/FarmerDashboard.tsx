@@ -12,6 +12,7 @@ import { toast } from "sonner";
 
 type Booking = {
   id: string;
+  farmer_id: string;
   acres_booked: number;
   total_amount: number | null;
   price_per_acre: number;
@@ -25,6 +26,8 @@ type Booking = {
 };
 
 type FarmerSummary = {
+  id: string;
+  farmer_id: string | null;
   registration_status: string;
   listing_status: string;
   full_name: string;
@@ -36,6 +39,7 @@ type FarmerSummary = {
   potato_variety: string | null;
   acreage_planted: number | null;
   planting_date: string | null;
+  bookings?: Booking[];
 };
 
 const fmtKES = (n: number) => `KES ${Number(n).toLocaleString()}`;
@@ -52,8 +56,7 @@ export default function FarmerDashboard() {
   const navigate = useNavigate();
   const session = getSession();
   const farmerId = session?.userId;
-  const [farmer, setFarmer] = useState<FarmerSummary | null>(null);
-  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [farms, setFarms] = useState<FarmerSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingDecisionId, setSavingDecisionId] = useState<string | null>(null);
 
@@ -61,8 +64,8 @@ export default function FarmerDashboard() {
     if (!farmerId) return;
     const { data, error } = await supabase.functions.invoke("api-auth/farmer/dashboard", { body: { farmer_id: farmerId } });
     if (!error && !data?.error) {
-      setFarmer((data?.farmer as FarmerSummary | null) || null);
-      setBookings((data?.bookings as unknown as Booking[]) || []);
+      const farmRows = (data?.farms as FarmerSummary[] | undefined) || [];
+      setFarms(farmRows);
     } else {
       toast.error(data?.error || "Failed to load farmer dashboard");
     }
@@ -73,10 +76,10 @@ export default function FarmerDashboard() {
 
   if (!session || session.role !== "farmer") return <Navigate to="/login" replace />;
 
-  const decideBooking = async (booking: Booking, decision: "approve" | "reject") => {
+  const decideBooking = async (farm: FarmerSummary, booking: Booking, decision: "approve" | "reject") => {
     setSavingDecisionId(booking.id);
     const { data, error } = await supabase.functions.invoke("api-auth/farmer/booking/decision", {
-      body: { farmer_id: farmerId, booking_id: booking.id, decision },
+      body: { farmer_id: farmerId, farm_id: farm.id, booking_id: booking.id, decision },
     });
     setSavingDecisionId(null);
     if (error || data?.error) {
@@ -102,19 +105,21 @@ export default function FarmerDashboard() {
     </Tooltip>
   );
 
-  const statusBadge = () => {
-    if (farmer?.registration_status === "pending") return <Badge className="bg-amber-500 hover:bg-amber-500 text-white">Pending Approval</Badge>;
-    if (farmer?.listing_status === "booked") return <Badge className="bg-blue-600 hover:bg-blue-600 text-white">Booked</Badge>;
-    if (farmer?.listing_status === "available") return <Badge className="bg-green-600 hover:bg-green-600 text-white">Available</Badge>;
-    return <Badge variant="secondary">{farmer?.listing_status ?? "—"}</Badge>;
+  const statusBadge = (farm: FarmerSummary) => {
+    if (farm.registration_status === "pending") return <Badge className="bg-amber-500 hover:bg-amber-500 text-white">Pending Approval</Badge>;
+    if (farm.listing_status === "booked") return <Badge className="bg-blue-600 hover:bg-blue-600 text-white">Booked</Badge>;
+    if (farm.listing_status === "available") return <Badge className="bg-green-600 hover:bg-green-600 text-white">Available</Badge>;
+    return <Badge variant="secondary">{farm.listing_status ?? "—"}</Badge>;
   };
+
+  const primaryFarm = farms[0] ?? null;
 
   return (
     <div className="container max-w-5xl py-8 space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold">Farmer Dashboard</h1>
-          {farmer?.full_name && <p className="text-muted-foreground text-sm">Welcome, {farmer.full_name}</p>}
+          {primaryFarm?.full_name && <p className="text-muted-foreground text-sm">Welcome, {primaryFarm.full_name}</p>}
         </div>
         <div className="flex gap-2">
           <Button asChild variant="outline"><Link to="/farmer/settings">Profile & Settings</Link></Button>
@@ -122,81 +127,94 @@ export default function FarmerDashboard() {
         </div>
       </div>
 
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between"><CardTitle>Listing Status</CardTitle>{statusBadge()}</CardHeader>
-        {farmer?.registration_status === "pending" && (
-          <CardContent><p className="text-sm text-muted-foreground">Your account is pending approval. You will be notified once approved.</p></CardContent>
-        )}
-      </Card>
-
-      {farmer && (
-        <Card>
-          <CardHeader><CardTitle>Profile Summary</CardTitle></CardHeader>
-          <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-            <div><div className="text-muted-foreground">Phone</div><div>{farmer.phone_number ?? "-"}</div></div>
-            <div><div className="text-muted-foreground">Email</div><div>{farmer.email ?? "-"}</div></div>
-            <div><div className="text-muted-foreground">County / Ward</div><div>{farmer.county ?? "-"}{farmer.ward ? `, ${farmer.ward}` : ""}</div></div>
-            <div><div className="text-muted-foreground">Location</div><div>{farmer.specific_location ?? "-"}</div></div>
-            <div><div className="text-muted-foreground">Variety</div><div>{farmer.potato_variety ?? "-"}</div></div>
-            <div><div className="text-muted-foreground">Acreage</div><div>{farmer.acreage_planted ?? "-"} acres</div></div>
-            <div><div className="text-muted-foreground">Planting Date</div><div>{farmer.planting_date ? fmtDate(farmer.planting_date) : "-"}</div></div>
-            <div><div className="text-muted-foreground">Listing</div><div>{farmer.listing_status ?? "-"}</div></div>
-          </CardContent>
-        </Card>
-      )}
-
-      <div>
-        <h2 className="text-xl font-semibold mb-3">My Bookings</h2>
-        {loading ? (
-          <p className="text-muted-foreground">Loading…</p>
-        ) : bookings.length === 0 ? (
-          <Card><CardContent className="py-12 text-center text-muted-foreground">You have no bookings yet.</CardContent></Card>
-        ) : (
-          <div className="space-y-4">
-            {bookings.map((r) => (
-              <Card key={r.id}>
-                <CardHeader>
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <CardTitle className="text-base">Booking Ref: <span className="font-mono text-sm">{r.id}</span></CardTitle>
-                    <div className="flex gap-2">
-                      <Badge variant={r.payment_status === "paid" ? "default" : "secondary"}>Payment: {r.payment_status}</Badge>
-                      <Badge variant="outline">Status: {farmerBookingStatus(r)}</Badge>
-                    </div>
-                  </div>
+      {loading ? (
+        <p className="text-muted-foreground">Loading…</p>
+      ) : farms.length === 0 ? (
+        <Card><CardContent className="py-12 text-center text-muted-foreground">No farm listings are linked to this account.</CardContent></Card>
+      ) : (
+        <div className="space-y-6">
+          {farms.map((farm) => {
+            const farmBookings = farm.bookings || [];
+            return (
+              <Card key={farm.id}>
+                <CardHeader className="flex flex-row items-center justify-between gap-3">
+                  <CardTitle>
+                    {farm.farmer_id || "Farm listing"}
+                    <span className="ml-2 text-sm font-normal text-muted-foreground">{farm.specific_location ?? "-"}</span>
+                  </CardTitle>
+                  {statusBadge(farm)}
                 </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                    <div><div className="text-muted-foreground">Booking Date</div><div>{fmtDate(r.created_at)}</div></div>
-                    <div><div className="text-muted-foreground">Acres Booked</div><div>{r.acres_booked}</div></div>
-                    <div><div className="text-muted-foreground">Total Amount</div><div className="font-semibold">{fmtKES(r.total_amount ?? r.acres_booked * r.price_per_acre)}</div></div>
-                    <div><div className="text-muted-foreground">Payment</div><div>{r.payment_status}</div></div>
-                    <div><div className="text-muted-foreground">Booking Status</div><div>{farmerBookingStatus(r)}</div></div>
-                  </div>
-                  {r.booking_status === "pending_approval" && (
-                    <div className="flex flex-wrap gap-2 border-t pt-3">
-                      <Button size="sm" onClick={() => decideBooking(r, "approve")} disabled={savingDecisionId === r.id}>
-                        {savingDecisionId === r.id ? "Saving..." : "Confirm Availability"}
-                      </Button>
-                      <Button size="sm" variant="destructive" onClick={() => decideBooking(r, "reject")} disabled={savingDecisionId === r.id}>
-                        Reject
-                      </Button>
-                    </div>
+                <CardContent className="space-y-5">
+                  {farm.registration_status === "pending" && (
+                    <p className="text-sm text-muted-foreground">This farm is pending approval. You will be notified once approved.</p>
                   )}
-                  <Collapsible>
-                    <CollapsibleTrigger asChild><Button variant="outline" size="sm">View Buyer Details</Button></CollapsibleTrigger>
-                    <CollapsibleContent className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm border-t pt-3">
-                      <div><div className="text-muted-foreground">Buyer Name</div><div>{r.buyers?.buyer_name ?? "—"}</div></div>
-                      <div><div className="text-muted-foreground">Phone</div><div>{canViewContact(r) ? r.buyers?.phone_number ?? "—" : <HiddenContact label="Buyer contact details will be revealed once the booking is confirmed." />}</div></div>
-                      <div><div className="text-muted-foreground">Email</div><div>{canViewContact(r) ? r.buyers?.email ?? "—" : <HiddenContact label="Buyer contact details will be revealed once the booking is confirmed." />}</div></div>
-                      <div><div className="text-muted-foreground">County</div><div>{r.buyers?.county ?? "—"}</div></div>
-                    </CollapsibleContent>
-                  </Collapsible>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                    <div><div className="text-muted-foreground">Phone</div><div>{farm.phone_number ?? "-"}</div></div>
+                    <div><div className="text-muted-foreground">Email</div><div>{farm.email ?? "-"}</div></div>
+                    <div><div className="text-muted-foreground">County / Ward</div><div>{farm.county ?? "-"}{farm.ward ? `, ${farm.ward}` : ""}</div></div>
+                    <div><div className="text-muted-foreground">Location</div><div>{farm.specific_location ?? "-"}</div></div>
+                    <div><div className="text-muted-foreground">Variety</div><div>{farm.potato_variety ?? "-"}</div></div>
+                    <div><div className="text-muted-foreground">Acreage</div><div>{farm.acreage_planted ?? "-"} acres</div></div>
+                    <div><div className="text-muted-foreground">Planting Date</div><div>{farm.planting_date ? fmtDate(farm.planting_date) : "-"}</div></div>
+                    <div><div className="text-muted-foreground">Listing</div><div>{farm.listing_status ?? "-"}</div></div>
+                  </div>
+
+                  <div>
+                    <h2 className="text-lg font-semibold mb-3">Bookings</h2>
+                    {farmBookings.length === 0 ? (
+                      <div className="rounded-md border py-8 text-center text-sm text-muted-foreground">No bookings for this farm yet.</div>
+                    ) : (
+                      <div className="space-y-4">
+                        {farmBookings.map((r) => (
+                          <div key={r.id} className="rounded-md border p-4">
+                            <div className="pb-4">
+                              <div className="flex items-center justify-between flex-wrap gap-2">
+                                <h3 className="text-base font-semibold">Booking Ref: <span className="font-mono text-sm">{r.id}</span></h3>
+                                <div className="flex gap-2">
+                                  <Badge variant={r.payment_status === "paid" ? "default" : "secondary"}>Payment: {r.payment_status}</Badge>
+                                  <Badge variant="outline">Status: {farmerBookingStatus(r)}</Badge>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="space-y-3">
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                                <div><div className="text-muted-foreground">Booking Date</div><div>{fmtDate(r.created_at)}</div></div>
+                                <div><div className="text-muted-foreground">Acres Booked</div><div>{r.acres_booked}</div></div>
+                                <div><div className="text-muted-foreground">Total Amount</div><div className="font-semibold">{fmtKES(r.total_amount ?? r.acres_booked * r.price_per_acre)}</div></div>
+                                <div><div className="text-muted-foreground">Payment</div><div>{r.payment_status}</div></div>
+                                <div><div className="text-muted-foreground">Booking Status</div><div>{farmerBookingStatus(r)}</div></div>
+                              </div>
+                              {r.booking_status === "pending_approval" && (
+                                <div className="flex flex-wrap gap-2 border-t pt-3">
+                                  <Button size="sm" onClick={() => decideBooking(farm, r, "approve")} disabled={savingDecisionId === r.id}>
+                                    {savingDecisionId === r.id ? "Saving..." : "Confirm Availability"}
+                                  </Button>
+                                  <Button size="sm" variant="destructive" onClick={() => decideBooking(farm, r, "reject")} disabled={savingDecisionId === r.id}>
+                                    Reject
+                                  </Button>
+                                </div>
+                              )}
+                              <Collapsible>
+                                <CollapsibleTrigger asChild><Button variant="outline" size="sm">View Buyer Details</Button></CollapsibleTrigger>
+                                <CollapsibleContent className="mt-3 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm border-t pt-3">
+                                  <div><div className="text-muted-foreground">Buyer Name</div><div>{r.buyers?.buyer_name ?? "—"}</div></div>
+                                  <div><div className="text-muted-foreground">Phone</div><div>{canViewContact(r) ? r.buyers?.phone_number ?? "—" : <HiddenContact label="Buyer contact details will be revealed once the booking is confirmed." />}</div></div>
+                                  <div><div className="text-muted-foreground">Email</div><div>{canViewContact(r) ? r.buyers?.email ?? "—" : <HiddenContact label="Buyer contact details will be revealed once the booking is confirmed." />}</div></div>
+                                  <div><div className="text-muted-foreground">County</div><div>{r.buyers?.county ?? "—"}</div></div>
+                                </CollapsibleContent>
+                              </Collapsible>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
-            ))}
-          </div>
-        )}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

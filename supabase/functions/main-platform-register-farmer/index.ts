@@ -7,6 +7,47 @@ import {
   validateMainPlatformFarmerRegistration,
 } from "../_shared/main-platform.ts";
 
+const ensureFarmerAccount = async (
+  supabase: ReturnType<typeof createClient>,
+  account: { email: string; full_name?: string | null; phone_number?: string | null },
+) => {
+  const normalizedEmail = account.email.trim().toLowerCase();
+  const { data: existing, error: existingErr } = await supabase
+    .from("farmer_accounts")
+    .select("id,email,full_name,phone_number")
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+  if (existingErr) throw existingErr;
+  if (existing) {
+    const updates: Record<string, unknown> = {};
+    if (!existing.full_name && account.full_name) updates.full_name = account.full_name;
+    if (!existing.phone_number && account.phone_number) updates.phone_number = account.phone_number;
+    if (Object.keys(updates).length > 0) {
+      const { data: updated, error: updateErr } = await supabase
+        .from("farmer_accounts")
+        .update(updates)
+        .eq("id", existing.id)
+        .select("id,email,full_name,phone_number")
+        .single();
+      if (updateErr) throw updateErr;
+      return updated;
+    }
+    return existing;
+  }
+
+  const { data: created, error } = await supabase
+    .from("farmer_accounts")
+    .insert({
+      email: normalizedEmail,
+      full_name: account.full_name ?? null,
+      phone_number: account.phone_number ?? null,
+    })
+    .select("id,email,full_name,phone_number")
+    .single();
+  if (error) throw error;
+  return created;
+};
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: mainPlatformCorsHeaders });
   if (req.method !== "POST") return mainPlatformJson(405, { status: 405, code: "method_not_allowed", message: "Method not allowed" });
@@ -45,12 +86,21 @@ Deno.serve(async (req) => {
       }
     }
 
+    const farmerAccount = validated.data.email
+      ? await ensureFarmerAccount(supabase, {
+        email: validated.data.email,
+        full_name: validated.data.full_name,
+        phone_number: validated.data.phone_number,
+      })
+      : null;
+
     const { data: farmer, error } = await supabase
       .from("farmers")
       .insert({
         full_name: validated.data.full_name,
         phone_number: validated.data.phone_number,
         email: validated.data.email,
+        farmer_account_id: farmerAccount?.id ?? null,
         county: validated.data.county,
         ward: validated.data.ward,
         specific_location: validated.data.specific_location,
