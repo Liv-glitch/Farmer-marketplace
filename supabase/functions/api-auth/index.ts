@@ -100,6 +100,100 @@ async function notifyBookingLifecycle(db: Db, booking_id: string, event: string)
   });
 }
 
+const makePromoCode = () => {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(8));
+  return `COM-${Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("")}`;
+};
+
+async function generateUniquePromoCode(db: Db) {
+  for (let i = 0; i < 8; i += 1) {
+    const code = makePromoCode();
+    const { data, error } = await db.from("buyer_promo_codes").select("id").eq("code", code).maybeSingle();
+    if (error) throw error;
+    if (!data) return code;
+  }
+  throw new Error("Could not generate a unique promo code");
+}
+
+async function sendBookingConfirmedNotifications(db: Db, booking_id: string, paymentStatus: "paid" | "promo_code") {
+  const { data: booking, error } = await db
+    .from("bookings")
+    .select("id, payment_reference, payment_status, booking_status, acres_booked, total_amount, farmer_id, buyer_id, buyers(buyer_name,company_name,email,phone_number,county), farmers(farmer_id,full_name,email,external_callback_url)")
+    .eq("id", booking_id)
+    .maybeSingle();
+  if (error || !booking) {
+    if (error) console.error("Booking confirmation notification lookup failed:", error);
+    return;
+  }
+
+  const buyer = Array.isArray(booking.buyers) ? booking.buyers[0] : booking.buyers;
+  const farmer = Array.isArray(booking.farmers) ? booking.farmers[0] : booking.farmers;
+  const buyerName = buyer?.buyer_name || "Customer";
+  const farmerName = farmer?.full_name || "Farmer";
+  const amountFormatted = paymentStatus === "promo_code"
+    ? "Promo code"
+    : `KES ${Number(booking.total_amount || 0).toLocaleString()}`;
+  const appBaseUrl = Deno.env.get("APP_BASE_URL") || "http://localhost:5173";
+
+  const buyerHtml = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e5e7eb;">
+      <div style="background:#166534;color:#fff;padding:16px;font-size:20px;font-weight:700;">PotatoMarket Kenya</div>
+      <div style="padding:20px;color:#111827;">
+        <p>Hello ${buyerName},</p>
+        <p>Your booking has been confirmed.</p>
+        <table style="width:100%;border-collapse:collapse;margin-top:12px;">
+          <tr><td style="border:1px solid #e5e7eb;padding:8px;font-weight:600;">Booking Ref</td><td style="border:1px solid #e5e7eb;padding:8px;">${booking.id}</td></tr>
+          <tr><td style="border:1px solid #e5e7eb;padding:8px;font-weight:600;">Farmer Name</td><td style="border:1px solid #e5e7eb;padding:8px;">${farmerName}</td></tr>
+          <tr><td style="border:1px solid #e5e7eb;padding:8px;font-weight:600;">Acres Booked</td><td style="border:1px solid #e5e7eb;padding:8px;">${booking.acres_booked}</td></tr>
+          <tr><td style="border:1px solid #e5e7eb;padding:8px;font-weight:600;">Payment</td><td style="border:1px solid #e5e7eb;padding:8px;">${amountFormatted}</td></tr>
+          <tr><td style="border:1px solid #e5e7eb;padding:8px;font-weight:600;">Status</td><td style="border:1px solid #e5e7eb;padding:8px;">Confirmed</td></tr>
+        </table>
+        <p style="margin-top:12px;">Thank you for using PotatoMarket Kenya.</p>
+      </div>
+      <div style="padding:16px;color:#6b7280;border-top:1px solid #e5e7eb;">© PotatoMarket Kenya</div>
+    </div>`;
+  const farmerHtml = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;border:1px solid #e5e7eb;">
+      <div style="background:#166534;color:#fff;padding:16px;font-size:20px;font-weight:700;">PotatoMarket Kenya</div>
+      <div style="padding:20px;color:#111827;">
+        <p>Hello ${farmerName},</p>
+        <p>You have a new booking.</p>
+        <table style="width:100%;border-collapse:collapse;margin-top:12px;">
+          <tr><td style="border:1px solid #e5e7eb;padding:8px;font-weight:600;">Booking Ref</td><td style="border:1px solid #e5e7eb;padding:8px;">${booking.id}</td></tr>
+          <tr><td style="border:1px solid #e5e7eb;padding:8px;font-weight:600;">Buyer Name</td><td style="border:1px solid #e5e7eb;padding:8px;">${buyerName}</td></tr>
+          <tr><td style="border:1px solid #e5e7eb;padding:8px;font-weight:600;">Buyer Phone</td><td style="border:1px solid #e5e7eb;padding:8px;">${buyer?.phone_number || "-"}</td></tr>
+          <tr><td style="border:1px solid #e5e7eb;padding:8px;font-weight:600;">Buyer County</td><td style="border:1px solid #e5e7eb;padding:8px;">${buyer?.county || "-"}</td></tr>
+          <tr><td style="border:1px solid #e5e7eb;padding:8px;font-weight:600;">Acres Booked</td><td style="border:1px solid #e5e7eb;padding:8px;">${booking.acres_booked}</td></tr>
+        </table>
+        <p style="margin-top:12px;"><a href="${appBaseUrl}/login" style="display:inline-block;background:#166534;color:#fff;padding:12px 18px;text-decoration:none;border-radius:6px;font-weight:600;">Log in to view details</a></p>
+      </div>
+      <div style="padding:16px;color:#6b7280;border-top:1px solid #e5e7eb;">© PotatoMarket Kenya</div>
+    </div>`;
+
+  try { if (buyer?.email) await sendEmail(buyer.email, "Booking Confirmed — PotatoMarket Kenya", buyerHtml); } catch (emailErr) { console.error(emailErr); }
+  try { if (farmer?.email) await sendEmail(farmer.email, "New Booking — PotatoMarket Kenya", farmerHtml); } catch (emailErr) { console.error(emailErr); }
+
+  await postMainPlatformCallback(farmer?.external_callback_url, {
+    event: "booking_confirmed",
+    data: {
+      booking_ref: booking.id,
+      farmer_id: farmer?.farmer_id ?? null,
+      payment_reference: booking.payment_reference,
+      payment_status: paymentStatus,
+      booking_status: "confirmed",
+      total_amount: booking.total_amount,
+      farm_acreage: booking.acres_booked,
+      buyer: {
+        company_name: buyer?.company_name ?? buyer?.buyer_name ?? null,
+        phone: buyer?.phone_number ?? null,
+        email: buyer?.email ?? null,
+        county: buyer?.county ?? null,
+      },
+    },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
 
@@ -374,16 +468,99 @@ Deno.serve(async (req) => {
       .order("created_at", { ascending: false });
     if (complaintsError) return j({ error: complaintsError.message }, 400);
 
+    const { data: activePromo, error: promoError } = await db
+      .from("buyer_promo_codes")
+      .select("id, code, status, granted_at")
+      .eq("buyer_id", buyer_id)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (promoError) return j({ error: promoError.message }, 400);
+
     const allBookings = bookings || [];
     return j({
       data: {
         profile,
+        activePromo,
         activeBookings: allBookings.filter((b) => b.booking_status === "confirmed" && !b.received_confirmed_at),
         pendingBookings: allBookings.filter((b) => b.booking_status === "pending_approval" || b.booking_status === "approved"),
         historicalBookings: allBookings.filter((b) => Boolean(b.received_confirmed_at) || b.booking_status === "rejected"),
         complaints: complaints || [],
       },
     });
+  }
+
+  if (path === "/buyer/booking/use-promo" && req.method === "POST") {
+    const { buyer_id, booking_id } = await req.json();
+    if (!buyer_id || !booking_id) return j({ error: "Missing buyer_id or booking_id" }, 400);
+
+    const { data: booking, error: bookingError } = await db
+      .from("bookings")
+      .select("id, buyer_id, booking_status, payment_status")
+      .eq("id", booking_id)
+      .eq("buyer_id", buyer_id)
+      .maybeSingle();
+    if (bookingError) return j({ error: bookingError.message }, 400);
+    if (!booking) return j({ error: "Booking not found" }, 404);
+    if (booking.booking_status === "confirmed" || booking.payment_status === "paid" || booking.payment_status === "promo_code") {
+      return j({ error: "This booking is already confirmed" }, 409);
+    }
+    if (booking.booking_status === "rejected" || booking.payment_status === "rejected") {
+      return j({ error: "This booking is no longer available" }, 409);
+    }
+    if (booking.booking_status !== "approved" || booking.payment_status !== "pending") {
+      return j({ error: "Promo codes can only be used after the farmer confirms availability" }, 409);
+    }
+
+    const { data: promo, error: promoError } = await db
+      .from("buyer_promo_codes")
+      .select("id, code, status")
+      .eq("buyer_id", buyer_id)
+      .eq("status", "active")
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (promoError) return j({ error: promoError.message }, 400);
+    if (!promo) return j({ error: "No active promo code is available for this buyer" }, 404);
+
+    const now = new Date().toISOString();
+    const { data: usedPromo, error: useError } = await db
+      .from("buyer_promo_codes")
+      .update({ status: "used", used_booking_id: booking.id, used_at: now })
+      .eq("id", promo.id)
+      .eq("status", "active")
+      .select("id, code")
+      .maybeSingle();
+    if (useError) return j({ error: useError.message }, 400);
+    if (!usedPromo) return j({ error: "This promo code has already been used" }, 409);
+
+    const { data: confirmedBooking, error: confirmError } = await db
+      .from("bookings")
+      .update({
+        payment_status: "promo_code",
+        booking_status: "confirmed",
+        payment_reference: usedPromo.code,
+        payment_requested_at: now,
+        updated_at: now,
+      })
+      .eq("id", booking.id)
+      .eq("buyer_id", buyer_id)
+      .eq("booking_status", "approved")
+      .eq("payment_status", "pending")
+      .select("id, payment_status, booking_status, payment_reference")
+      .maybeSingle();
+    if (confirmError) {
+      await db.from("buyer_promo_codes").update({ status: "active", used_booking_id: null, used_at: null }).eq("id", usedPromo.id);
+      return j({ error: confirmError.message }, 400);
+    }
+    if (!confirmedBooking) {
+      await db.from("buyer_promo_codes").update({ status: "active", used_booking_id: null, used_at: null }).eq("id", usedPromo.id);
+      return j({ error: "This booking could not be confirmed with a promo code" }, 409);
+    }
+
+    await sendBookingConfirmedNotifications(db, booking.id, "promo_code");
+    return j({ ok: true, data: { booking: confirmedBooking, promo: usedPromo } });
   }
 
   if (path === "/buyer/booking/confirm-received" && req.method === "POST") {
@@ -664,7 +841,10 @@ if (path === "/farmer/profile" && req.method === "GET") {
   if (path === "/admin/buyers" && req.method === "POST") {
     const { admin_id } = await req.json();
     if (!(await isAdmin(db, admin_id))) return j({ error: "Unauthorized" }, 403);
-    const { data, error } = await db.from("buyers").select("*").order("created_at", { ascending: false });
+    const { data, error } = await db
+      .from("buyers")
+      .select("*, buyer_promo_codes(id, code, status, granted_at, used_at, revoked_at, used_booking_id)")
+      .order("created_at", { ascending: false });
     if (error) return j({ error: error.message }, 400);
     return j({ data });
   }
@@ -730,6 +910,57 @@ if (path === "/farmer/profile" && req.method === "GET") {
     const { error } = await db.from("buyers").update(updates).eq("id", id);
     if (error) return j({ error: error.message }, 400);
     return j({ ok: true });
+  }
+
+  if (path === "/admin/buyer/promo/grant" && req.method === "POST") {
+    const { admin_id, buyer_id } = await req.json();
+    if (!(await isAdmin(db, admin_id))) return j({ error: "Unauthorized" }, 403);
+    if (!buyer_id) return j({ error: "Missing buyer_id" }, 400);
+
+    const { data: buyer, error: buyerError } = await db.from("buyers").select("id").eq("id", buyer_id).maybeSingle();
+    if (buyerError) return j({ error: buyerError.message }, 400);
+    if (!buyer) return j({ error: "Buyer not found" }, 404);
+
+    const { data: existing, error: existingError } = await db
+      .from("buyer_promo_codes")
+      .select("id, code")
+      .eq("buyer_id", buyer_id)
+      .eq("status", "active")
+      .maybeSingle();
+    if (existingError) return j({ error: existingError.message }, 400);
+    if (existing) return j({ error: `Buyer already has active promo code ${existing.code}` }, 409);
+
+    let code = "";
+    try {
+      code = await generateUniquePromoCode(db);
+    } catch (codeError) {
+      console.error("Promo code generation failed:", codeError);
+      return j({ error: "Could not generate a promo code. Please try again." }, 500);
+    }
+    const { data, error } = await db
+      .from("buyer_promo_codes")
+      .insert({ buyer_id, granted_by_admin_id: admin_id, code, status: "active" })
+      .select("id, code, status, granted_at")
+      .single();
+    if (error) return j({ error: error.message }, 400);
+    return j({ ok: true, data });
+  }
+
+  if (path === "/admin/buyer/promo/revoke" && req.method === "POST") {
+    const { admin_id, promo_id } = await req.json();
+    if (!(await isAdmin(db, admin_id))) return j({ error: "Unauthorized" }, 403);
+    if (!promo_id) return j({ error: "Missing promo_id" }, 400);
+
+    const { data, error } = await db
+      .from("buyer_promo_codes")
+      .update({ status: "revoked", revoked_at: new Date().toISOString() })
+      .eq("id", promo_id)
+      .eq("status", "active")
+      .select("id, code, status, revoked_at")
+      .maybeSingle();
+    if (error) return j({ error: error.message }, 400);
+    if (!data) return j({ error: "Active promo code not found" }, 404);
+    return j({ ok: true, data });
   }
 
   if (path === "/admin/buyer/delete" && req.method === "POST") {

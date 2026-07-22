@@ -26,6 +26,7 @@ import {
   ShoppingCart,
   Smartphone,
   Star,
+  TicketCheck,
   User,
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -74,11 +75,19 @@ type Complaint = {
   bookings?: { id: string; farmers?: { full_name: string | null; farmer_id: string | null } | null } | null;
 };
 
+type ActivePromo = {
+  id: string;
+  code: string;
+  status: string;
+  granted_at: string;
+};
+
 const fmtKES = (n: number | null | undefined) => `KES ${Number(n || 0).toLocaleString()}`;
 const fmtDate = (d?: string | null) => d ? new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "-";
 
 const statusVariant = (status: string) => status === "confirmed" || status === "resolved" ? "default" : status === "rejected" ? "destructive" : "secondary";
 const prettyStatus = (status: string) => status.replace(/_/g, " ");
+const paymentVariant = (status: string) => status === "paid" || status === "promo_code" ? "default" : "outline";
 const canViewContact = (booking: Booking) => booking.booking_status === "confirmed" || booking.payment_status === "paid";
 const buyerStatusLabel = (booking: Booking) => {
   if (booking.booking_status === "pending_approval") return "Pending farmer confirmation";
@@ -96,12 +105,14 @@ export default function BuyerDashboard() {
   const [pendingBookings, setPendingBookings] = useState<Booking[]>([]);
   const [historicalBookings, setHistoricalBookings] = useState<Booking[]>([]);
   const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [activePromo, setActivePromo] = useState<ActivePromo | null>(null);
   const [receiptBooking, setReceiptBooking] = useState<Booking | null>(null);
   const [receiptForm, setReceiptForm] = useState({ finalPrice: "", quantityReceived: "", deliveryDate: "", rating: "5" });
   const [receiptSaving, setReceiptSaving] = useState(false);
   const [complaintForm, setComplaintForm] = useState({ bookingId: "none", subject: "", content: "" });
   const [complaintSaving, setComplaintSaving] = useState(false);
   const [payingBookingId, setPayingBookingId] = useState<string | null>(null);
+  const [promoBookingId, setPromoBookingId] = useState<string | null>(null);
   const [paymentOverlay, setPaymentOverlay] = useState<{ reference: string; bookingRef: string; message: string; paid: boolean; timeout: boolean } | null>(null);
 
   const loadDashboard = useCallback(async () => {
@@ -115,6 +126,7 @@ export default function BuyerDashboard() {
     }
     const payload = data?.data || {};
     setProfile(payload.profile || null);
+    setActivePromo(payload.activePromo || null);
     setActiveBookings(payload.activeBookings || []);
     setPendingBookings(payload.pendingBookings || []);
     setHistoricalBookings(payload.historicalBookings || []);
@@ -248,6 +260,21 @@ export default function BuyerDashboard() {
     }, 4000);
   };
 
+  const applyPromoCode = async (booking: Booking) => {
+    if (!buyerId || !activePromo) return;
+    setPromoBookingId(booking.id);
+    const { data, error } = await supabase.functions.invoke("api-auth/buyer/booking/use-promo", {
+      body: { buyer_id: buyerId, booking_id: booking.id },
+    });
+    setPromoBookingId(null);
+    if (error || data?.error) {
+      toast.error(data?.error || "Could not use this promo code. Please try again.");
+      return;
+    }
+    toast.success("Promo code applied. Booking confirmed!");
+    await loadDashboard();
+  };
+
   const BookingCards = ({ rows, action }: { rows: Booking[]; action?: (booking: Booking) => JSX.Element }) => (
     rows.length === 0 ? (
       <Card className="border-dashed bg-white/80 shadow-sm">
@@ -275,7 +302,7 @@ export default function BuyerDashboard() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Badge variant={statusVariant(booking.booking_status)} className="capitalize">Status: {buyerStatusLabel(booking)}</Badge>
-                    <Badge variant={booking.payment_status === "paid" ? "default" : "outline"} className="capitalize">Payment: {prettyStatus(booking.payment_status)}</Badge>
+                    <Badge variant={paymentVariant(booking.payment_status)} className="capitalize">Payment: {prettyStatus(booking.payment_status)}</Badge>
                   </div>
                 </div>
 
@@ -343,7 +370,7 @@ export default function BuyerDashboard() {
               </div>
             </div>
           </div>
-          <div className="grid gap-4 px-5 py-4 text-sm md:grid-cols-3 md:px-7">
+          <div className="grid gap-4 px-5 py-4 text-sm md:grid-cols-4 md:px-7">
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Business type</p>
               <p className="mt-1 font-medium text-slate-950">{profile?.business_type || "Buyer account"}</p>
@@ -355,6 +382,10 @@ export default function BuyerDashboard() {
             <div>
               <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Contact</p>
               <p className="mt-1 font-medium text-slate-950">{profile?.email || profile?.phone_number || "Profile details pending"}</p>
+            </div>
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Promo code</p>
+              <p className="mt-1 font-medium text-slate-950">{activePromo ? activePromo.code : "None available"}</p>
             </div>
           </div>
         </section>
@@ -399,9 +430,21 @@ export default function BuyerDashboard() {
         <TabsContent value="pending" className="mt-4">
           <BookingCards rows={pendingBookings} action={(booking) => (
             booking.booking_status === "approved" ? (
-              <Button onClick={() => startPayment(booking)} disabled={payingBookingId === booking.id}>
-                <CreditCard className="mr-2 h-4 w-4" /> {payingBookingId === booking.id ? "Starting payment..." : "Pay now"}
-              </Button>
+              <div className="flex flex-wrap justify-end gap-2">
+                {activePromo && (
+                  <Button
+                    variant="outline"
+                    onClick={() => applyPromoCode(booking)}
+                    disabled={promoBookingId === booking.id || payingBookingId === booking.id}
+                  >
+                    <TicketCheck className="mr-2 h-4 w-4" />
+                    {promoBookingId === booking.id ? "Applying promo..." : `Use Promo ${activePromo.code}`}
+                  </Button>
+                )}
+                <Button onClick={() => startPayment(booking)} disabled={payingBookingId === booking.id || promoBookingId === booking.id}>
+                  <CreditCard className="mr-2 h-4 w-4" /> {payingBookingId === booking.id ? "Starting payment..." : "Pay with M-Pesa"}
+                </Button>
+              </div>
             ) : (
               <Badge variant="secondary">Pending farmer confirmation</Badge>
             )
