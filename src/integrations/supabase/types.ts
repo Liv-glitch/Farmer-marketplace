@@ -170,6 +170,70 @@ export type Database = {
           },
         ]
       }
+      buyer_promo_codes: {
+        Row: {
+          buyer_id: string
+          code: string
+          created_at: string
+          granted_at: string
+          granted_by_admin_id: string | null
+          id: string
+          revoked_at: string | null
+          status: string
+          updated_at: string
+          used_at: string | null
+          used_booking_id: string | null
+        }
+        Insert: {
+          buyer_id: string
+          code: string
+          created_at?: string
+          granted_at?: string
+          granted_by_admin_id?: string | null
+          id?: string
+          revoked_at?: string | null
+          status?: string
+          updated_at?: string
+          used_at?: string | null
+          used_booking_id?: string | null
+        }
+        Update: {
+          buyer_id?: string
+          code?: string
+          created_at?: string
+          granted_at?: string
+          granted_by_admin_id?: string | null
+          id?: string
+          revoked_at?: string | null
+          status?: string
+          updated_at?: string
+          used_at?: string | null
+          used_booking_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "buyer_promo_codes_buyer_id_fkey"
+            columns: ["buyer_id"]
+            isOneToOne: false
+            referencedRelation: "buyers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "buyer_promo_codes_granted_by_admin_id_fkey"
+            columns: ["granted_by_admin_id"]
+            isOneToOne: false
+            referencedRelation: "admins"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "buyer_promo_codes_used_booking_id_fkey"
+            columns: ["used_booking_id"]
+            isOneToOne: false
+            referencedRelation: "bookings"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       buyers: {
         Row: {
           account_status: string

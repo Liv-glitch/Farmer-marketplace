@@ -45,6 +45,7 @@ type FarmerSummary = {
 const fmtKES = (n: number) => `KES ${Number(n).toLocaleString()}`;
 const fmtDate = (d: string) => new Date(d).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 const canViewContact = (booking: Booking) => booking.booking_status === "confirmed" || booking.payment_status === "paid";
+const paymentBadgeVariant = (status: string) => status === "paid" || status === "promo_code" ? "default" : "secondary";
 const farmerBookingStatus = (booking: Booking) => {
   if (booking.booking_status === "pending_approval") return "Pending farmer confirmation";
   if (booking.booking_status === "approved") return "Pending buyer confirmation";
@@ -171,7 +172,7 @@ export default function FarmerDashboard() {
                               <div className="flex items-center justify-between flex-wrap gap-2">
                                 <h3 className="text-base font-semibold">Booking Ref: <span className="font-mono text-sm">{r.id}</span></h3>
                                 <div className="flex gap-2">
-                                  <Badge variant={r.payment_status === "paid" ? "default" : "secondary"}>Payment: {r.payment_status}</Badge>
+                                  <Badge variant={paymentBadgeVariant(r.payment_status)}>Payment: {r.payment_status}</Badge>
                                   <Badge variant="outline">Status: {farmerBookingStatus(r)}</Badge>
                                 </div>
                               </div>

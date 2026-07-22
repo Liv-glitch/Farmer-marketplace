@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { Sprout, Users, ShoppingCart, LogOut, CheckCircle, XCircle, DollarSign, Pencil, Trash2, AlertCircle } from "lucide-react";
+import { Sprout, Users, ShoppingCart, LogOut, CheckCircle, XCircle, DollarSign, Pencil, Trash2, AlertCircle, Gift, Ban } from "lucide-react";
 import { format } from "date-fns";
 import { BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, LineChart, Line, ResponsiveContainer } from "recharts";
 import type { Tables as DbTables } from "@/integrations/supabase/types";
@@ -25,6 +25,19 @@ const getEstimatedHarvest = (plantingDate: string, variety: string) => {
   d.setDate(d.getDate() + days);
   return d;
 };
+
+type BuyerPromoCode = {
+  id: string;
+  code: string;
+  status: string;
+  granted_at: string;
+  used_at: string | null;
+  revoked_at: string | null;
+  used_booking_id: string | null;
+};
+
+const getActivePromo = (buyer: DbTables<"buyers"> & { buyer_promo_codes?: BuyerPromoCode[] }) =>
+  buyer.buyer_promo_codes?.find((promo) => promo.status === "active") || null;
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
@@ -135,6 +148,33 @@ const AdminDashboard = () => {
     },
   });
 
+  const grantBuyerPromo = useMutation({
+    mutationFn: async (buyerId: string) => {
+      const session = getSession();
+      const { data, error } = await supabase.functions.invoke("api-auth/admin/buyer/promo/grant", { body: { admin_id: session?.userId, buyer_id: buyerId } });
+      if (error || data?.error) throw new Error(data?.error || error?.message);
+      return data?.data as BuyerPromoCode;
+    },
+    onSuccess: (promo) => {
+      queryClient.invalidateQueries({ queryKey: ["admin-buyers"] });
+      toast.success(`Promo code ${promo.code} granted`);
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const revokeBuyerPromo = useMutation({
+    mutationFn: async (promoId: string) => {
+      const session = getSession();
+      const { data, error } = await supabase.functions.invoke("api-auth/admin/buyer/promo/revoke", { body: { admin_id: session?.userId, promo_id: promoId } });
+      if (error || data?.error) throw new Error(data?.error || error?.message);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-buyers"] });
+      toast.success("Promo code revoked");
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const handleLogout = async () => { await signOut(); navigate("/login"); };
 
   const openEditFarmer = (f: DbTables<"farmers">) => {
@@ -207,9 +247,11 @@ const AdminDashboard = () => {
     .filter((f) => f.payment_status === "paid")
     .reduce((sum, f) => sum + (f.registration_fee || 0), 0);
   const buyerRevenue = bookings
-    .filter((b: any) => b.booking_status === "confirmed")
+    .filter((b: any) => b.booking_status === "confirmed" && b.payment_status === "paid")
     .reduce((sum: number, b: any) => sum + (b.total_amount || 0), 0);
   const totalRevenue = farmerRevenue + buyerRevenue;
+  const promoBookings = bookings.filter((b: { booking_status?: string; payment_status?: string }) => b.booking_status === "confirmed" && b.payment_status === "promo_code").length;
+  const activeBuyerPromos = buyers.filter((b) => getActivePromo(b as DbTables<"buyers"> & { buyer_promo_codes?: BuyerPromoCode[] })).length;
 
   return (
     <div className="min-h-screen bg-background">
@@ -227,7 +269,7 @@ const AdminDashboard = () => {
 
       <div className="container py-8">
         {/* Summary Cards */}
-        <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+        <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-7">
           <Card>
             <CardContent className="flex items-center gap-4 p-6">
               <div className="rounded-full bg-primary/10 p-3"><Sprout className="h-6 w-6 text-primary" /></div>
@@ -273,6 +315,13 @@ const AdminDashboard = () => {
               <p className="text-sm text-muted-foreground mb-1">Promo Registrations</p>
               <p className="text-2xl font-bold">{farmers.filter(f => f.payment_status === "promo_code").length}</p>
               <p className="text-xs text-muted-foreground mt-1">Not counted in revenue</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-6">
+              <p className="text-sm text-muted-foreground mb-1">Buyer Promos</p>
+              <p className="text-2xl font-bold">{activeBuyerPromos}</p>
+              <p className="text-xs text-muted-foreground mt-1">{promoBookings} promo bookings confirmed</p>
             </CardContent>
           </Card>
           <Card>
@@ -459,30 +508,72 @@ const AdminDashboard = () => {
                     <TableHead>Phone</TableHead>
                     <TableHead>Email</TableHead>
                     <TableHead>County</TableHead>
+                    <TableHead>Promo</TableHead>
                     <TableHead>Registered</TableHead>
                     <TableHead>Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredBuyers.map((b) => (
-                    <TableRow key={b.id}>
-                      <TableCell>{b.buyer_name}</TableCell>
-                      <TableCell>{b.phone_number}</TableCell>
-                      <TableCell>{b.email}</TableCell>
-                      <TableCell>{b.county}</TableCell>
-                      <TableCell>{format(new Date(b.created_at), "dd MMM yyyy")}</TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openEditBuyer(b)}>
-                            <Pencil className="h-3 w-3" />
-                          </Button>
-                          <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => { if (confirm("Delete this buyer?")) deleteBuyer.mutate(b.id); }}>
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {filteredBuyers.map((b) => {
+                    const buyer = b as DbTables<"buyers"> & { buyer_promo_codes?: BuyerPromoCode[] };
+                    const activePromo = getActivePromo(buyer);
+                    const latestPromo = buyer.buyer_promo_codes?.[0] || null;
+                    return (
+                      <TableRow key={b.id}>
+                        <TableCell>{b.buyer_name}</TableCell>
+                        <TableCell>{b.phone_number}</TableCell>
+                        <TableCell>{b.email}</TableCell>
+                        <TableCell>{b.county}</TableCell>
+                        <TableCell>
+                          {activePromo ? (
+                            <div className="space-y-1">
+                              <Badge className="bg-emerald-600 hover:bg-emerald-600">{activePromo.code}</Badge>
+                              <div className="text-xs text-muted-foreground">Active</div>
+                            </div>
+                          ) : latestPromo ? (
+                            <div className="space-y-1">
+                              <Badge variant="outline" className="capitalize">{latestPromo.status}</Badge>
+                              <div className="text-xs text-muted-foreground">{latestPromo.code}</div>
+                            </div>
+                          ) : (
+                            <Badge variant="secondary">None</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>{format(new Date(b.created_at), "dd MMM yyyy")}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-wrap gap-1">
+                            {activePromo ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                onClick={() => revokeBuyerPromo.mutate(activePromo.id)}
+                                disabled={revokeBuyerPromo.isPending}
+                              >
+                                <Ban className="mr-1 h-3 w-3" /> Revoke
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                onClick={() => grantBuyerPromo.mutate(b.id)}
+                                disabled={grantBuyerPromo.isPending}
+                              >
+                                <Gift className="mr-1 h-3 w-3" /> Grant Promo
+                              </Button>
+                            )}
+                            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => openEditBuyer(b)}>
+                              <Pencil className="h-3 w-3" />
+                            </Button>
+                            <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => { if (confirm("Delete this buyer?")) deleteBuyer.mutate(b.id); }}>
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
