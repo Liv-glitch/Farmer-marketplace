@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   applyHarvestDateFilters,
   getEstimatedHarvestDate,
+  isHarvestDue,
 } from "../../supabase/functions/external-get-farmers/harvest";
 import { validateExternalBookingRequest } from "../../supabase/functions/external-book-farmer/validation";
 import {
   validateMainPlatformBookingDecision,
   validateMainPlatformFarmerRegistration,
+  validateMainPlatformFarmerRelist,
 } from "../../supabase/functions/_shared/main-platform";
 
 describe("external procurement farmers", () => {
@@ -36,6 +38,11 @@ describe("external procurement farmers", () => {
 
     expect(farmers.map((farmer) => farmer.farmer_id)).toEqual(["inside"]);
     expect(farmers[0].estimated_harvest_date).toBe("2026-07-30");
+  });
+
+  it("detects listings whose harvest date has arrived", () => {
+    expect(isHarvestDue({ planting_date: "2026-05-01", potato_variety: "Shangi" }, "2026-07-30")).toBe(true);
+    expect(isHarvestDue({ planting_date: "2026-05-01", potato_variety: "Shangi" }, "2026-07-29")).toBe(false);
   });
 });
 
@@ -137,5 +144,25 @@ describe("main platform validation", () => {
       booking_ref: "00000000-0000-0000-0000-000000000000",
       decision: "maybe",
     })).toEqual({ ok: false, status: 400, message: "decision must be approve or reject" });
+  });
+
+  it("accepts main platform relist requests", () => {
+    expect(validateMainPlatformFarmerRelist({
+      farmer_id: "F-12345",
+      planting_date: "2026-08-01",
+    })).toEqual({
+      ok: true,
+      data: {
+        farmer_id: "F-12345",
+        planting_date: "2026-08-01",
+      },
+    });
+  });
+
+  it("rejects invalid main platform relist dates", () => {
+    expect(validateMainPlatformFarmerRelist({
+      farmer_id: "F-12345",
+      planting_date: "August 1",
+    })).toEqual({ ok: false, status: 400, message: "planting_date must be a valid YYYY-MM-DD date" });
   });
 });

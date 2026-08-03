@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { postMainPlatformCallback } from "../_shared/main-platform.ts";
+import { isHarvestDue } from "../external-get-farmers/harvest.ts";
 
 const PRICE_PER_ACRE = 5000;
 
@@ -65,13 +66,21 @@ Deno.serve(async (req) => {
 
     const { data: farmer, error: farmerErr } = await supabase
       .from("farmers")
-      .select("id, farmer_id, registration_status, listing_status, acreage_planted, external_callback_url")
+      .select("id, farmer_id, registration_status, listing_status, acreage_planted, planting_date, potato_variety, external_callback_url")
       .eq("id", farmerId)
       .maybeSingle();
     if (farmerErr) throw farmerErr;
     if (!farmer) return json({ ok: false, error: "Farmer not found", code: "farmer_not_found" }, 404);
     if (farmer.registration_status !== "approved" || farmer.listing_status !== "available") {
       return json({ ok: false, error: "This farm is no longer available for booking.", code: "farmer_unavailable" }, 409);
+    }
+    if (isHarvestDue(farmer)) {
+      await supabase
+        .from("farmers")
+        .update({ listing_status: "harvested" })
+        .eq("id", farmer.id)
+        .eq("listing_status", "available");
+      return json({ ok: false, error: "This farm has reached harvest and is no longer listed.", code: "farmer_harvested" }, 409);
     }
 
     const acres = Number(farmer.acreage_planted);

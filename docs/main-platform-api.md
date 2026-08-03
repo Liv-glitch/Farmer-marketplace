@@ -87,6 +87,40 @@ x-api-key: <EXTERNAL_API_KEY_MAIN>
 
 Returns farmer profile, registration/listing status, acreage, planting date, and estimated harvest date.
 
+`listing_status` can be `pending_approval`, `available`, `booked`, or `harvested`. A harvested listing has been removed from marketplace listings because its estimated harvest date was reached.
+
+## Relist Farmer After Harvest
+
+```http
+POST /functions/v1/main-platform-relist-farmer
+Content-Type: application/json
+x-api-key: <EXTERNAL_API_KEY_MAIN>
+```
+
+Request:
+
+```json
+{
+  "farmer_id": "F-12345",
+  "planting_date": "2026-08-01"
+}
+```
+
+Response:
+
+```json
+{
+  "status": 200,
+  "data": {
+    "farmer_id": "F-12345",
+    "listing_status": "available",
+    "planting_date": "2026-08-01",
+    "estimated_harvest_date": "2026-10-30",
+    "message": "Farmer listing has been listed again"
+  }
+}
+```
+
 ## Get Farmer Bookings
 
 ```http
@@ -189,6 +223,8 @@ When a farmer or booking has a `callback_url`, this platform posts lifecycle eve
 - `booking_confirmed`
 - `payment_timeout`
 - `booking_received`
+- `farmer_harvested`
+- `farmer_relisted`
 
 Example callback:
 

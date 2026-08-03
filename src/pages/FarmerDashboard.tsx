@@ -6,8 +6,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { EyeOff } from "lucide-react";
+import { CalendarDays, EyeOff, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 type Booking = {
@@ -39,6 +42,7 @@ type FarmerSummary = {
   potato_variety: string | null;
   acreage_planted: number | null;
   planting_date: string | null;
+  estimated_harvest_date?: string | null;
   bookings?: Booking[];
 };
 
@@ -60,6 +64,9 @@ export default function FarmerDashboard() {
   const [farms, setFarms] = useState<FarmerSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingDecisionId, setSavingDecisionId] = useState<string | null>(null);
+  const [relistingFarm, setRelistingFarm] = useState<FarmerSummary | null>(null);
+  const [relistPlantingDate, setRelistPlantingDate] = useState("");
+  const [relistSaving, setRelistSaving] = useState(false);
 
   const loadDashboard = useCallback(async () => {
     if (!farmerId) return;
@@ -91,6 +98,32 @@ export default function FarmerDashboard() {
     await loadDashboard();
   };
 
+  const openRelist = (farm: FarmerSummary) => {
+    setRelistingFarm(farm);
+    setRelistPlantingDate("");
+  };
+
+  const relistFarm = async () => {
+    if (!relistingFarm || !farmerId) return;
+    if (!relistPlantingDate) {
+      toast.error("Choose a new planting date");
+      return;
+    }
+    setRelistSaving(true);
+    const { data, error } = await supabase.functions.invoke("api-auth/farmer/listing/relist", {
+      body: { farmer_id: farmerId, farm_id: relistingFarm.id, planting_date: relistPlantingDate },
+    });
+    setRelistSaving(false);
+    if (error || data?.error) {
+      toast.error(data?.error || "Failed to list farm again");
+      return;
+    }
+    toast.success("Farm listed again");
+    setRelistingFarm(null);
+    setRelistPlantingDate("");
+    await loadDashboard();
+  };
+
   const HiddenContact = ({ label }: { label: string }) => (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -110,6 +143,7 @@ export default function FarmerDashboard() {
     if (farm.registration_status === "pending") return <Badge className="bg-amber-500 hover:bg-amber-500 text-white">Pending Approval</Badge>;
     if (farm.listing_status === "booked") return <Badge className="bg-blue-600 hover:bg-blue-600 text-white">Booked</Badge>;
     if (farm.listing_status === "available") return <Badge className="bg-green-600 hover:bg-green-600 text-white">Available</Badge>;
+    if (farm.listing_status === "harvested") return <Badge className="bg-slate-700 hover:bg-slate-700 text-white">Harvested</Badge>;
     return <Badge variant="secondary">{farm.listing_status ?? "—"}</Badge>;
   };
 
@@ -149,6 +183,20 @@ export default function FarmerDashboard() {
                   {farm.registration_status === "pending" && (
                     <p className="text-sm text-muted-foreground">This farm is pending approval. You will be notified once approved.</p>
                   )}
+                  {farm.listing_status === "harvested" && (
+                    <div className="flex flex-col gap-3 rounded-md border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 md:flex-row md:items-center md:justify-between">
+                      <div className="flex gap-3">
+                        <CalendarDays className="mt-0.5 h-5 w-5 shrink-0" />
+                        <p>
+                          This listing was removed from the marketplace because its harvest date was reached
+                          {farm.estimated_harvest_date ? ` on ${fmtDate(farm.estimated_harvest_date)}` : ""}.
+                        </p>
+                      </div>
+                      <Button size="sm" onClick={() => openRelist(farm)}>
+                        <RotateCcw className="mr-2 h-4 w-4" /> List Again
+                      </Button>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                     <div><div className="text-muted-foreground">Phone</div><div>{farm.phone_number ?? "-"}</div></div>
                     <div><div className="text-muted-foreground">Email</div><div>{farm.email ?? "-"}</div></div>
@@ -157,6 +205,7 @@ export default function FarmerDashboard() {
                     <div><div className="text-muted-foreground">Variety</div><div>{farm.potato_variety ?? "-"}</div></div>
                     <div><div className="text-muted-foreground">Acreage</div><div>{farm.acreage_planted ?? "-"} acres</div></div>
                     <div><div className="text-muted-foreground">Planting Date</div><div>{farm.planting_date ? fmtDate(farm.planting_date) : "-"}</div></div>
+                    <div><div className="text-muted-foreground">Est. Harvest</div><div>{farm.estimated_harvest_date ? fmtDate(farm.estimated_harvest_date) : "-"}</div></div>
                     <div><div className="text-muted-foreground">Listing</div><div>{farm.listing_status ?? "-"}</div></div>
                   </div>
 
@@ -216,6 +265,27 @@ export default function FarmerDashboard() {
           })}
         </div>
       )}
+      <Dialog open={!!relistingFarm} onOpenChange={(open) => !open && setRelistingFarm(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>List Farm Again</DialogTitle>
+            <DialogDescription>Choose the new planting date for this farm. The marketplace harvest date will be recalculated from the potato variety.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="relist-planting-date">New planting date</Label>
+            <Input
+              id="relist-planting-date"
+              type="date"
+              value={relistPlantingDate}
+              onChange={(event) => setRelistPlantingDate(event.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRelistingFarm(null)} disabled={relistSaving}>Cancel</Button>
+            <Button onClick={relistFarm} disabled={relistSaving}>{relistSaving ? "Saving..." : "List Again"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

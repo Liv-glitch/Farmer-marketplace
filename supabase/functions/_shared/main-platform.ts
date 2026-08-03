@@ -98,6 +98,26 @@ export type MainPlatformBookingDecision = {
   decision: "approve" | "reject";
 };
 
+export type MainPlatformFarmerRelist = {
+  farmer_id: string;
+  planting_date: string;
+};
+
+export const validateMainPlatformFarmerRelist = (body: Record<string, unknown>): ValidationResult<MainPlatformFarmerRelist> => {
+  const data = {
+    farmer_id: String(body.farmer_id || "").trim(),
+    planting_date: String(body.planting_date || "").trim(),
+  };
+
+  const missing: string[] = [];
+  if (!data.farmer_id) missing.push("farmer_id");
+  if (!data.planting_date) missing.push("planting_date");
+  if (missing.length) return { ok: false, status: 400, message: `Missing required fields: ${missing.join(", ")}` };
+  if (!isValidDate(data.planting_date)) return { ok: false, status: 400, message: "planting_date must be a valid YYYY-MM-DD date" };
+
+  return { ok: true, data };
+};
+
 export const validateMainPlatformBookingDecision = (body: Record<string, unknown>): ValidationResult<MainPlatformBookingDecision> => {
   const data = {
     farmer_id: String(body.farmer_id || "").trim(),
