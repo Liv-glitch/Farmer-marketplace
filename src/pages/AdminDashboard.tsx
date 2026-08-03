@@ -13,18 +13,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { Sprout, Users, ShoppingCart, LogOut, CheckCircle, XCircle, DollarSign, Pencil, Trash2, AlertCircle, Gift, Ban } from "lucide-react";
+import { Sprout, Users, ShoppingCart, LogOut, CheckCircle, XCircle, DollarSign, Pencil, Trash2, AlertCircle, Gift, Ban, LandPlot } from "lucide-react";
 import { format } from "date-fns";
 import { BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, LineChart, Line, ResponsiveContainer } from "recharts";
 import type { Tables as DbTables } from "@/integrations/supabase/types";
-import { HARVEST_DAYS } from "@/data/kenyaLocations";
-
-const getEstimatedHarvest = (plantingDate: string, variety: string) => {
-  const days = HARVEST_DAYS[variety] || 100;
-  const d = new Date(plantingDate);
-  d.setDate(d.getDate() + days);
-  return d;
-};
+import { getEstimatedHarvest } from "@/lib/harvest";
 
 type BuyerPromoCode = {
   id: string;
@@ -241,6 +234,12 @@ const AdminDashboard = () => {
   const pendingFarmers = farmers.filter((f) => f.registration_status === "pending").length;
   const pendingBookings = bookings.filter((b: any) => b.booking_status === "pending_approval").length;
   const openComplaints = complaints.filter((c: any) => c.status === "open").length;
+  const activeFarmers = farmers.filter((f) => f.registration_status === "approved" && f.listing_status !== "harvested").length;
+  const pastFarmers = farmers.length - activeFarmers;
+  const activeBuyers = buyers.filter((b) => b.account_status === "active").length;
+  const pastBuyers = buyers.length - activeBuyers;
+  const usersToDate = farmers.length + buyers.length;
+  const acresToDate = farmers.reduce((sum, f) => sum + Number(f.acreage_planted || 0), 0);
 
   // Revenue split: exclude promo registrations from farmer revenue
   const farmerRevenue = farmers
@@ -269,22 +268,56 @@ const AdminDashboard = () => {
 
       <div className="container py-8">
         {/* Summary Cards */}
-        <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-7">
+        <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-9">
           <Card>
-            <CardContent className="flex items-center gap-4 p-6">
-              <div className="rounded-full bg-primary/10 p-3"><Sprout className="h-6 w-6 text-primary" /></div>
-              <div>
+            <CardContent className="p-6">
+              <div className="flex items-center gap-2 mb-2">
+                <Users className="h-5 w-5 text-primary" />
+                <p className="text-sm text-muted-foreground">Users to Date</p>
+              </div>
+              <p className="text-2xl font-bold">{usersToDate}</p>
+              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                <p>Active: {activeFarmers + activeBuyers}</p>
+                <p>Past/Inactive: {pastFarmers + pastBuyers}</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center gap-2 mb-2">
+                <Sprout className="h-5 w-5 text-primary" />
                 <p className="text-sm text-muted-foreground">Total Farmers</p>
+              </div>
+              <div>
                 <p className="text-2xl font-bold">{farmers.length}</p>
+                <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                  <p>Active: {activeFarmers}</p>
+                  <p>Past/Inactive: {pastFarmers}</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center gap-2 mb-2">
+                <Users className="h-5 w-5 text-accent" />
+                <p className="text-sm text-muted-foreground">Total Buyers</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{buyers.length}</p>
+                <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                  <p>Active: {activeBuyers}</p>
+                  <p>Past/Inactive: {pastBuyers}</p>
+                </div>
               </div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="flex items-center gap-4 p-6">
-              <div className="rounded-full bg-accent/10 p-3"><Users className="h-6 w-6 text-accent" /></div>
+              <div className="rounded-full bg-emerald-500/10 p-3"><LandPlot className="h-6 w-6 text-emerald-600" /></div>
               <div>
-                <p className="text-sm text-muted-foreground">Total Buyers</p>
-                <p className="text-2xl font-bold">{buyers.length}</p>
+                <p className="text-sm text-muted-foreground">Acres to Date</p>
+                <p className="text-2xl font-bold">{acresToDate.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
               </div>
             </CardContent>
           </Card>

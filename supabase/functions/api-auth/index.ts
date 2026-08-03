@@ -2,6 +2,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 import bcrypt from "npm:bcryptjs@2.4.3";
 import { sendEmail } from "../_shared/resend.js";
 import { postMainPlatformCallback } from "../_shared/main-platform.ts";
+import { getEstimatedHarvestDate, isHarvestDue } from "../external-get-farmers/harvest.ts";
 
 const hash = (s: string, r: number) => bcrypt.hash(s, r);
 const compare = (s: string, h: string) => bcrypt.compare(s, h);
@@ -65,6 +66,11 @@ async function ensureFarmerAccount(
 const isValidDate = (value: unknown) => {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   return !Number.isNaN(new Date(`${value}T00:00:00Z`).getTime());
+};
+
+const hasFutureHarvest = (plantingDate: string, variety: string | null | undefined) => {
+  const harvestDate = getEstimatedHarvestDate(plantingDate, variety ?? null);
+  return Boolean(harvestDate && harvestDate > new Date().toISOString().slice(0, 10));
 };
 
 async function notifyBookingLifecycle(db: Db, booking_id: string, event: string) {
@@ -719,9 +725,52 @@ Deno.serve(async (req) => {
       bookings: bookingRows,
       farms: farmRows.map((farm) => ({
         ...farm,
+        estimated_harvest_date: getEstimatedHarvestDate(farm.planting_date, farm.potato_variety),
         bookings: bookingRows.filter((booking) => booking.farmer_id === farm.id),
       })),
     });
+  }
+
+  if (path === "/farmer/listing/relist" && req.method === "POST") {
+    const { farmer_id, farm_id, planting_date } = await req.json();
+    if (!farmer_id || !farm_id || !planting_date) return j({ error: "Missing farmer_id, farm_id, or planting_date" }, 400);
+    const nextPlantingDate = String(planting_date).trim();
+    if (!isValidDate(nextPlantingDate)) return j({ error: "planting_date must be a valid YYYY-MM-DD date" }, 400);
+
+    const { data: farm, error: farmError } = await db
+      .from("farmers")
+      .select("id, farmer_id, farmer_account_id, registration_status, listing_status, potato_variety, external_callback_url")
+      .eq("id", farm_id)
+      .eq("farmer_account_id", farmer_id)
+      .maybeSingle();
+    if (farmError) return j({ error: farmError.message }, 400);
+    if (!farm) return j({ error: "Farm not found for this account" }, 404);
+    if (farm.registration_status !== "approved") return j({ error: "Only approved farms can be relisted" }, 409);
+    if (farm.listing_status !== "harvested") return j({ error: "Only harvested listings can be listed again" }, 409);
+    if (!hasFutureHarvest(nextPlantingDate, farm.potato_variety)) {
+      return j({ error: "New planting date must produce a future harvest date" }, 400);
+    }
+
+    const { data, error } = await db
+      .from("farmers")
+      .update({ planting_date: nextPlantingDate, listing_status: "available" })
+      .eq("id", farm.id)
+      .eq("listing_status", "harvested")
+      .select("id, farmer_id, planting_date, potato_variety, listing_status")
+      .single();
+    if (error) return j({ error: error.message }, 400);
+
+    await postMainPlatformCallback(farm.external_callback_url, {
+      event: "farmer_relisted",
+      data: {
+        farmer_id: farm.farmer_id,
+        listing_status: "available",
+        planting_date: data.planting_date,
+        estimated_harvest_date: getEstimatedHarvestDate(data.planting_date, data.potato_variety),
+      },
+    });
+
+    return j({ ok: true, data: { ...data, estimated_harvest_date: getEstimatedHarvestDate(data.planting_date, data.potato_variety) } });
   }
 
   if (path === "/farmer/booking/decision" && req.method === "POST") {

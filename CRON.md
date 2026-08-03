@@ -1,8 +1,8 @@
-# Payment Expiry Cron
+# Scheduled Edge Functions
 
-This project uses a scheduled Supabase Edge Function to expire unpaid bookings.
+This project uses scheduled Supabase Edge Functions for lifecycle cleanup.
 
-## What It Does
+## Payment Expiry
 
 `expire-pending-bookings` should run every minute. It finds bookings where:
 
@@ -22,10 +22,11 @@ The normal app still polls `booking-status`, which also has the same 2-minute ex
 
 ## Required Secrets
 
-Set this Edge Function secret:
+Set these Edge Function secrets:
 
 ```sh
 supabase secrets set PAYMENT_EXPIRY_CRON_SECRET="<generate-a-long-random-secret>"
+supabase secrets set HARVEST_CRON_SECRET="<generate-a-long-random-secret>"
 ```
 
 Keep the value private. The cron invocation must send it as:
@@ -38,6 +39,7 @@ x-cron-secret: <PAYMENT_EXPIRY_CRON_SECRET>
 
 ```sh
 supabase functions deploy expire-pending-bookings
+supabase functions deploy harvest-due-listings
 ```
 
 ## Schedule It In Supabase
@@ -53,6 +55,7 @@ create extension if not exists supabase_vault;
 
 select vault.create_secret('https://YOUR_PROJECT_REF.supabase.co', 'project_url');
 select vault.create_secret('YOUR_PAYMENT_EXPIRY_CRON_SECRET', 'payment_expiry_cron_secret');
+select vault.create_secret('YOUR_HARVEST_CRON_SECRET', 'harvest_cron_secret');
 
 select cron.schedule(
   'expire-pending-bookings-every-minute',
@@ -64,6 +67,22 @@ select cron.schedule(
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'payment_expiry_cron_secret')
+    ),
+    body := jsonb_build_object('triggered_at', now())
+  ) as request_id;
+  $$
+);
+
+select cron.schedule(
+  'harvest-due-listings-daily',
+  '15 3 * * *',
+  $$
+  select net.http_post(
+    url := (select decrypted_secret from vault.decrypted_secrets where name = 'project_url')
+      || '/functions/v1/harvest-due-listings',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'x-cron-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'harvest_cron_secret')
     ),
     body := jsonb_build_object('triggered_at', now())
   ) as request_id;
@@ -98,13 +117,38 @@ Expected response:
 }
 ```
 
+For harvest cleanup:
+
+```sh
+curl -X POST \
+  "https://YOUR_PROJECT_REF.supabase.co/functions/v1/harvest-due-listings" \
+  -H "Content-Type: application/json" \
+  -H "x-cron-secret: YOUR_HARVEST_CRON_SECRET" \
+  -d '{}'
+```
+
+Expected response:
+
+```json
+{
+  "status": 200,
+  "data": {
+    "as_of": "2026-08-03",
+    "harvested": 0,
+    "callback_failures": []
+  }
+}
+```
+
 ## Operational Notes
 
 - Run every minute so a 2-minute timeout is enforced promptly after a payment prompt is started.
+- Run harvest cleanup daily. Listing APIs also defensively hide listings whose estimated harvest date has already arrived.
 - If a Paystack success webhook arrives after a booking has expired, the webhook ignores it and does not re-confirm the booking.
 - If a callback URL is down, the booking is still expired and the farmer is still released; the failed callback is logged in `callback_failures`.
 - To remove the schedule:
 
 ```sql
 select cron.unschedule('expire-pending-bookings-every-minute');
+select cron.unschedule('harvest-due-listings-daily');
 ```

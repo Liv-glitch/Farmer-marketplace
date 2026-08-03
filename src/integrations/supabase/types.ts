@@ -472,7 +472,7 @@ export type Database = {
     Enums: {
       app_role: "admin" | "user"
       booking_status: "pending_approval" | "approved" | "rejected" | "confirmed"
-      listing_status: "available" | "pending_approval" | "booked"
+      listing_status: "available" | "pending_approval" | "booked" | "harvested"
       payment_status: "pending" | "paid" | "promo_code" | "rejected"
       registration_status: "pending" | "approved" | "rejected"
     }
@@ -604,7 +604,7 @@ export const Constants = {
     Enums: {
       app_role: ["admin", "user"],
       booking_status: ["pending_approval", "approved", "rejected", "confirmed"],
-      listing_status: ["available", "pending_approval", "booked"],
+      listing_status: ["available", "pending_approval", "booked", "harvested"],
       payment_status: ["pending", "paid", "promo_code", "rejected"],
       registration_status: ["pending", "approved", "rejected"],
     },

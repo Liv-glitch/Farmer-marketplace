@@ -13,14 +13,10 @@ import { toast } from "sonner";
 import Navbar from "@/components/Navbar";
 import { supabase } from "@/integrations/supabase/client";
 import { getSession } from "@/lib/auth";
-import { KENYA_COUNTIES, POTATO_VARIETIES, HARVEST_DAYS } from "@/data/kenyaLocations";
+import { KENYA_COUNTIES, POTATO_VARIETIES } from "@/data/kenyaLocations";
+import { getEstimatedHarvest, isHarvestDue } from "@/lib/harvest";
 import { MapPin, Calendar, Wheat, LayoutGrid, TableIcon, Search, Loader2, CheckCircle2, LogIn } from "lucide-react";
-import { format, addDays } from "date-fns";
-
-const getEstimatedHarvest = (plantingDate: string, variety: string) => {
-  const days = HARVEST_DAYS[variety] || 100;
-  return addDays(new Date(plantingDate), days);
-};
+import { format } from "date-fns";
 
 const PRICE_PER_ACRE = 5000;
 
@@ -45,7 +41,7 @@ const Marketplace = () => {
         .eq("registration_status", "approved")
         .eq("listing_status", "available");
       if (error) throw error;
-      return (data || []).sort((a, b) => {
+      return (data || []).filter((farmer) => !isHarvestDue(farmer.planting_date, farmer.potato_variety)).sort((a, b) => {
         const ha = getEstimatedHarvest(a.planting_date, a.potato_variety);
         const hb = getEstimatedHarvest(b.planting_date, b.potato_variety);
         return ha.getTime() - hb.getTime();
@@ -191,7 +187,6 @@ const Marketplace = () => {
                     <TableHead>Ward</TableHead>
                     <TableHead>Variety</TableHead>
                     <TableHead>Acreage</TableHead>
-                    <TableHead>Planting Date</TableHead>
                     <TableHead>Est. Harvest</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
@@ -206,7 +201,6 @@ const Marketplace = () => {
                         <TableCell>{f.ward}</TableCell>
                         <TableCell>{f.potato_variety}</TableCell>
                         <TableCell>{f.acreage_planted}</TableCell>
-                        <TableCell>{format(new Date(f.planting_date), "dd MMM yy")}</TableCell>
                         <TableCell>{format(harvest, "dd MMM yy")}</TableCell>
                         <TableCell><Button size="sm" onClick={() => onBookClick(f)}>Book</Button></TableCell>
                       </TableRow>

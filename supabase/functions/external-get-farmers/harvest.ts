@@ -47,6 +47,13 @@ export const withEstimatedHarvestDate = <T extends FarmerWithPlantingDate>(farme
   estimated_harvest_date: getEstimatedHarvestDate(farmer.planting_date, farmer.potato_variety),
 });
 
+export const todayIsoDate = (now = new Date()) => now.toISOString().slice(0, 10);
+
+export const isHarvestDue = (farmer: FarmerWithPlantingDate, asOf = todayIsoDate()) => {
+  const harvestDate = getEstimatedHarvestDate(farmer.planting_date, farmer.potato_variety);
+  return Boolean(harvestDate && harvestDate <= asOf);
+};
+
 export const applyHarvestDateFilters = <T extends FarmerWithPlantingDate>(
   farmers: T[],
   filters: HarvestDateFilters,

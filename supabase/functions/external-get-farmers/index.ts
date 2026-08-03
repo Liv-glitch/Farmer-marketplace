@@ -1,5 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { applyHarvestDateFilters } from "./harvest.ts";
+import { applyHarvestDateFilters, isHarvestDue } from "./harvest.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -71,7 +71,7 @@ Deno.serve(async (req) => {
       return json(404, { status: 404, message: "No farmers match the provided filters" });
     }
 
-    const filtered = applyHarvestDateFilters(data, { harvest_date_from, harvest_date_to });
+    const filtered = applyHarvestDateFilters(data.filter((farmer) => !isHarvestDue(farmer)), { harvest_date_from, harvest_date_to });
 
     if (filtered.length === 0) {
       return json(404, { status: 404, message: "No farmers match the provided filters" });
