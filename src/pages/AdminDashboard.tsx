@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { Sprout, Users, ShoppingCart, LogOut, CheckCircle, XCircle, DollarSign, Pencil, Trash2, AlertCircle, Gift, Ban, LandPlot } from "lucide-react";
+import { Sprout, Users, ShoppingCart, LogOut, CheckCircle, XCircle, DollarSign, Pencil, Trash2, AlertCircle, Gift, Ban, LandPlot, ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { format } from "date-fns";
 import { BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, LineChart, Line, ResponsiveContainer } from "recharts";
 import type { Tables as DbTables } from "@/integrations/supabase/types";
@@ -32,6 +32,11 @@ type BuyerPromoCode = {
 const getActivePromo = (buyer: DbTables<"buyers"> & { buyer_promo_codes?: BuyerPromoCode[] }) =>
   buyer.buyer_promo_codes?.find((promo) => promo.status === "active") || null;
 
+type FarmerSort = {
+  field: "estimated_harvest" | null;
+  direction: "asc" | "desc";
+};
+
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -40,6 +45,7 @@ const AdminDashboard = () => {
   const [farmerForm, setFarmerForm] = useState<any>({});
   const [buyerFormState, setBuyerFormState] = useState<any>({});
   const [farmerFilters, setFarmerFilters] = useState({ search: "", status: "all", county: "all" });
+  const [farmerSort, setFarmerSort] = useState<FarmerSort>({ field: null, direction: "asc" });
   const [bookingFilters, setBookingFilters] = useState({ search: "", status: "all", payment: "all" });
   const [buyerFilters, setBuyerFilters] = useState({ search: "", county: "all" });
   const [complaintFilters, setComplaintFilters] = useState({ search: "", status: "all" });
@@ -196,13 +202,36 @@ const AdminDashboard = () => {
     setEditingBuyer(null);
   };
 
-  const filteredFarmers = useMemo(() => farmers.filter((f) => {
-    const q = farmerFilters.search.trim().toLowerCase();
-    if (q && !(f.farmer_id?.toLowerCase().includes(q) || f.full_name?.toLowerCase().includes(q) || f.phone_number?.toLowerCase().includes(q))) return false;
-    if (farmerFilters.status !== "all" && f.registration_status !== farmerFilters.status) return false;
-    if (farmerFilters.county !== "all" && f.county !== farmerFilters.county) return false;
-    return true;
-  }), [farmers, farmerFilters]);
+  const getFarmerHarvestTime = (farmer: DbTables<"farmers">) => {
+    const harvest = getEstimatedHarvest(farmer.planting_date, farmer.potato_variety);
+    return Number.isNaN(harvest.getTime()) ? Number.MAX_SAFE_INTEGER : harvest.getTime();
+  };
+
+  const toggleFarmerHarvestSort = () => {
+    setFarmerSort((current) => ({
+      field: "estimated_harvest",
+      direction: current.field === "estimated_harvest" && current.direction === "asc" ? "desc" : "asc",
+    }));
+  };
+
+  const filteredFarmers = useMemo(() => {
+    const next = farmers.filter((f) => {
+      const q = farmerFilters.search.trim().toLowerCase();
+      if (q && !(f.farmer_id?.toLowerCase().includes(q) || f.full_name?.toLowerCase().includes(q) || f.phone_number?.toLowerCase().includes(q))) return false;
+      if (farmerFilters.status !== "all" && f.registration_status !== farmerFilters.status) return false;
+      if (farmerFilters.county !== "all" && f.county !== farmerFilters.county) return false;
+      return true;
+    });
+
+    if (farmerSort.field === "estimated_harvest") {
+      next.sort((a, b) => {
+        const diff = getFarmerHarvestTime(a) - getFarmerHarvestTime(b);
+        return farmerSort.direction === "asc" ? diff : -diff;
+      });
+    }
+
+    return next;
+  }, [farmers, farmerFilters, farmerSort]);
 
   const filteredBookings = useMemo(() => bookings.filter((b: any) => {
     const q = bookingFilters.search.trim().toLowerCase();
@@ -405,7 +434,18 @@ const AdminDashboard = () => {
                     <TableHead>County / Ward</TableHead>
                     <TableHead>Variety</TableHead>
                     <TableHead>Acreage</TableHead>
-                    <TableHead>Est. Harvest</TableHead>
+                    <TableHead>
+                      <Button variant="ghost" size="sm" className="h-8 px-2" onClick={toggleFarmerHarvestSort}>
+                        Est. Harvest
+                        {farmerSort.field !== "estimated_harvest" ? (
+                          <ArrowUpDown className="ml-1 h-3 w-3" />
+                        ) : farmerSort.direction === "asc" ? (
+                          <ArrowUp className="ml-1 h-3 w-3" />
+                        ) : (
+                          <ArrowDown className="ml-1 h-3 w-3" />
+                        )}
+                      </Button>
+                    </TableHead>
                     <TableHead>Fee</TableHead>
                     <TableHead>Payment</TableHead>
                     <TableHead>Status</TableHead>
