@@ -961,6 +961,82 @@ if (path === "/farmer/profile" && req.method === "GET") {
     return j({ ok: true });
   }
 
+  if (path === "/admin/buyer/password" && req.method === "POST") {
+    const { admin_id, buyer_id, new_password } = await req.json();
+    if (!(await isAdmin(db, admin_id))) return j({ error: "Unauthorized" }, 403);
+    if (!buyer_id || !new_password) return j({ error: "Missing buyer_id or new_password" }, 400);
+    if (String(new_password).length < 8) return j({ error: "Password must be at least 8 characters" }, 400);
+
+    const { data: buyer, error: lookupError } = await db.from("buyers").select("id").eq("id", buyer_id).maybeSingle();
+    if (lookupError) return j({ error: lookupError.message }, 400);
+    if (!buyer) return j({ error: "Buyer not found" }, 404);
+
+    const { error } = await db
+      .from("buyers")
+      .update({
+        password_hash: await hash(String(new_password), 10),
+        account_status: "active",
+        setup_token: null,
+        setup_token_expires_at: null,
+      })
+      .eq("id", buyer_id);
+    if (error) return j({ error: error.message }, 400);
+    return j({ ok: true });
+  }
+
+  if (path === "/admin/farmer/password" && req.method === "POST") {
+    const { admin_id, farmer_id, new_password } = await req.json();
+    if (!(await isAdmin(db, admin_id))) return j({ error: "Unauthorized" }, 403);
+    if (!farmer_id || !new_password) return j({ error: "Missing farmer_id or new_password" }, 400);
+    if (String(new_password).length < 8) return j({ error: "Password must be at least 8 characters" }, 400);
+
+    const { data: farmer, error: lookupError } = await db
+      .from("farmers")
+      .select("id,email,full_name,phone_number,farmer_account_id")
+      .eq("id", farmer_id)
+      .maybeSingle();
+    if (lookupError) return j({ error: lookupError.message }, 400);
+    if (!farmer) return j({ error: "Farmer not found" }, 404);
+    if (!farmer.email) return j({ error: "This farmer does not have an email address for login" }, 400);
+
+    const passwordHash = await hash(String(new_password), 10);
+    let farmerAccountId = farmer.farmer_account_id;
+    if (farmerAccountId) {
+      const { error } = await db
+        .from("farmer_accounts")
+        .update({
+          password_hash: passwordHash,
+          email: String(farmer.email).trim().toLowerCase(),
+          full_name: farmer.full_name,
+          phone_number: farmer.phone_number,
+        })
+        .eq("id", farmerAccountId);
+      if (error) return j({ error: error.message }, 400);
+    } else {
+      const account = await ensureFarmerAccount(db, {
+        email: String(farmer.email),
+        full_name: farmer.full_name,
+        phone_number: farmer.phone_number,
+        password_hash: passwordHash,
+      });
+      farmerAccountId = account.id;
+    }
+
+    const { error } = await db
+      .from("farmers")
+      .update({ password_hash: passwordHash, farmer_account_id: farmerAccountId })
+      .eq("farmer_account_id", farmerAccountId);
+    if (error) return j({ error: error.message }, 400);
+
+    const { error: selectedFarmerError } = await db
+      .from("farmers")
+      .update({ password_hash: passwordHash, farmer_account_id: farmerAccountId })
+      .eq("id", farmer.id);
+    if (selectedFarmerError) return j({ error: selectedFarmerError.message }, 400);
+
+    return j({ ok: true });
+  }
+
   if (path === "/admin/buyer/promo/grant" && req.method === "POST") {
     const { admin_id, buyer_id } = await req.json();
     if (!(await isAdmin(db, admin_id))) return j({ error: "Unauthorized" }, 403);

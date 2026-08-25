@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { Sprout, Users, ShoppingCart, LogOut, CheckCircle, XCircle, DollarSign, Pencil, Trash2, AlertCircle, Gift, Ban, LandPlot, ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import { Sprout, Users, ShoppingCart, LogOut, CheckCircle, XCircle, DollarSign, Pencil, Trash2, AlertCircle, Gift, Ban, LandPlot, ArrowDown, ArrowUp, ArrowUpDown, KeyRound } from "lucide-react";
 import { format } from "date-fns";
 import { BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, LineChart, Line, ResponsiveContainer } from "recharts";
 import type { Tables as DbTables } from "@/integrations/supabase/types";
@@ -44,6 +44,8 @@ const AdminDashboard = () => {
   const [editingBuyer, setEditingBuyer] = useState<DbTables<"buyers"> | null>(null);
   const [farmerForm, setFarmerForm] = useState<any>({});
   const [buyerFormState, setBuyerFormState] = useState<any>({});
+  const [farmerPassword, setFarmerPassword] = useState({ new_password: "", confirm_password: "" });
+  const [buyerPassword, setBuyerPassword] = useState({ new_password: "", confirm_password: "" });
   const [farmerFilters, setFarmerFilters] = useState({ search: "", status: "all", county: "all" });
   const [farmerSort, setFarmerSort] = useState<FarmerSort>({ field: null, direction: "asc" });
   const [bookingFilters, setBookingFilters] = useState({ search: "", status: "all", payment: "all" });
@@ -122,6 +124,36 @@ const AdminDashboard = () => {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin-buyers"] }); toast.success("Buyer deleted"); },
   });
 
+  const resetFarmerPassword = useMutation({
+    mutationFn: async ({ farmerId, newPassword }: { farmerId: string; newPassword: string }) => {
+      const session = getSession();
+      const { data, error } = await supabase.functions.invoke("api-auth/admin/farmer/password", {
+        body: { admin_id: session?.userId, farmer_id: farmerId, new_password: newPassword },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message || "Failed to reset farmer password");
+    },
+    onSuccess: () => {
+      setFarmerPassword({ new_password: "", confirm_password: "" });
+      toast.success("Farmer password updated");
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const resetBuyerPassword = useMutation({
+    mutationFn: async ({ buyerId, newPassword }: { buyerId: string; newPassword: string }) => {
+      const session = getSession();
+      const { data, error } = await supabase.functions.invoke("api-auth/admin/buyer/password", {
+        body: { admin_id: session?.userId, buyer_id: buyerId, new_password: newPassword },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message || "Failed to reset buyer password");
+    },
+    onSuccess: () => {
+      setBuyerPassword({ new_password: "", confirm_password: "" });
+      toast.success("Buyer password updated");
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const updateBooking = useMutation({
     mutationFn: async ({ id, farmerId, status }: { id: string; farmerId: string; status: "approved" | "rejected" }) => {
       const session = getSession();
@@ -178,6 +210,7 @@ const AdminDashboard = () => {
 
   const openEditFarmer = (f: DbTables<"farmers">) => {
     setFarmerForm({ full_name: f.full_name, phone_number: f.phone_number, email: f.email || "", county: f.county, ward: f.ward, specific_location: f.specific_location, potato_variety: f.potato_variety, acreage_planted: f.acreage_planted });
+    setFarmerPassword({ new_password: "", confirm_password: "" });
     setEditingFarmer(f);
   };
 
@@ -189,6 +222,7 @@ const AdminDashboard = () => {
 
   const openEditBuyer = (b: DbTables<"buyers">) => {
     setBuyerFormState({ buyer_name: b.buyer_name, phone_number: b.phone_number, email: b.email, county: b.county });
+    setBuyerPassword({ new_password: "", confirm_password: "" });
     setEditingBuyer(b);
   };
 
@@ -200,6 +234,32 @@ const AdminDashboard = () => {
     queryClient.invalidateQueries({ queryKey: ["admin-buyers"] });
     toast.success("Buyer updated");
     setEditingBuyer(null);
+  };
+
+  const saveFarmerPassword = () => {
+    if (!editingFarmer) return;
+    if (farmerPassword.new_password.length < 8) {
+      toast.error("Password must be at least 8 characters");
+      return;
+    }
+    if (farmerPassword.new_password !== farmerPassword.confirm_password) {
+      toast.error("Passwords do not match");
+      return;
+    }
+    resetFarmerPassword.mutate({ farmerId: editingFarmer.id, newPassword: farmerPassword.new_password });
+  };
+
+  const saveBuyerPassword = () => {
+    if (!editingBuyer) return;
+    if (buyerPassword.new_password.length < 8) {
+      toast.error("Password must be at least 8 characters");
+      return;
+    }
+    if (buyerPassword.new_password !== buyerPassword.confirm_password) {
+      toast.error("Passwords do not match");
+      return;
+    }
+    resetBuyerPassword.mutate({ buyerId: editingBuyer.id, newPassword: buyerPassword.new_password });
   };
 
   const getFarmerHarvestTime = (farmer: DbTables<"farmers">) => {
@@ -747,6 +807,39 @@ const AdminDashboard = () => {
               <Input type="number" min="0.1" step="0.1" value={farmerForm.acreage_planted || ""} onChange={(e) => setFarmerForm((p: any) => ({ ...p, acreage_planted: e.target.value }))} />
             </div>
             <Button className="w-full" onClick={saveEditFarmer}>Save Changes</Button>
+            <div className="border-t pt-4 space-y-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <KeyRound className="h-4 w-4" />
+                Reset Password
+              </div>
+              <div className="space-y-1">
+                <Label>New Password</Label>
+                <Input
+                  type="password"
+                  minLength={8}
+                  value={farmerPassword.new_password}
+                  onChange={(e) => setFarmerPassword((p) => ({ ...p, new_password: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Confirm New Password</Label>
+                <Input
+                  type="password"
+                  minLength={8}
+                  value={farmerPassword.confirm_password}
+                  onChange={(e) => setFarmerPassword((p) => ({ ...p, confirm_password: e.target.value }))}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={saveFarmerPassword}
+                disabled={resetFarmerPassword.isPending}
+              >
+                {resetFarmerPassword.isPending ? "Updating Password..." : "Update Password"}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -773,6 +866,39 @@ const AdminDashboard = () => {
               <Input value={buyerFormState.county || ""} onChange={(e) => setBuyerFormState((p: any) => ({ ...p, county: e.target.value }))} />
             </div>
             <Button className="w-full" onClick={saveEditBuyer}>Save Changes</Button>
+            <div className="border-t pt-4 space-y-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <KeyRound className="h-4 w-4" />
+                Reset Password
+              </div>
+              <div className="space-y-1">
+                <Label>New Password</Label>
+                <Input
+                  type="password"
+                  minLength={8}
+                  value={buyerPassword.new_password}
+                  onChange={(e) => setBuyerPassword((p) => ({ ...p, new_password: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Confirm New Password</Label>
+                <Input
+                  type="password"
+                  minLength={8}
+                  value={buyerPassword.confirm_password}
+                  onChange={(e) => setBuyerPassword((p) => ({ ...p, confirm_password: e.target.value }))}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={saveBuyerPassword}
+                disabled={resetBuyerPassword.isPending}
+              >
+                {resetBuyerPassword.isPending ? "Updating Password..." : "Update Password"}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
