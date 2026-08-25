@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { Sprout, Users, ShoppingCart, LogOut, CheckCircle, XCircle, DollarSign, Pencil, Trash2, AlertCircle, Gift, Ban, LandPlot } from "lucide-react";
+import { Sprout, Users, ShoppingCart, LogOut, CheckCircle, XCircle, DollarSign, Pencil, Trash2, AlertCircle, Gift, Ban, LandPlot, ArrowDown, ArrowUp, ArrowUpDown, KeyRound } from "lucide-react";
 import { format } from "date-fns";
 import { BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, LineChart, Line, ResponsiveContainer } from "recharts";
 import type { Tables as DbTables } from "@/integrations/supabase/types";
@@ -32,6 +32,11 @@ type BuyerPromoCode = {
 const getActivePromo = (buyer: DbTables<"buyers"> & { buyer_promo_codes?: BuyerPromoCode[] }) =>
   buyer.buyer_promo_codes?.find((promo) => promo.status === "active") || null;
 
+type FarmerSort = {
+  field: "estimated_harvest" | null;
+  direction: "asc" | "desc";
+};
+
 const AdminDashboard = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -39,7 +44,10 @@ const AdminDashboard = () => {
   const [editingBuyer, setEditingBuyer] = useState<DbTables<"buyers"> | null>(null);
   const [farmerForm, setFarmerForm] = useState<any>({});
   const [buyerFormState, setBuyerFormState] = useState<any>({});
+  const [farmerPassword, setFarmerPassword] = useState({ new_password: "", confirm_password: "" });
+  const [buyerPassword, setBuyerPassword] = useState({ new_password: "", confirm_password: "" });
   const [farmerFilters, setFarmerFilters] = useState({ search: "", status: "all", county: "all" });
+  const [farmerSort, setFarmerSort] = useState<FarmerSort>({ field: null, direction: "asc" });
   const [bookingFilters, setBookingFilters] = useState({ search: "", status: "all", payment: "all" });
   const [buyerFilters, setBuyerFilters] = useState({ search: "", county: "all" });
   const [complaintFilters, setComplaintFilters] = useState({ search: "", status: "all" });
@@ -116,6 +124,36 @@ const AdminDashboard = () => {
     onSuccess: () => { queryClient.invalidateQueries({ queryKey: ["admin-buyers"] }); toast.success("Buyer deleted"); },
   });
 
+  const resetFarmerPassword = useMutation({
+    mutationFn: async ({ farmerId, newPassword }: { farmerId: string; newPassword: string }) => {
+      const session = getSession();
+      const { data, error } = await supabase.functions.invoke("api-auth/admin/farmer/password", {
+        body: { admin_id: session?.userId, farmer_id: farmerId, new_password: newPassword },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message || "Failed to reset farmer password");
+    },
+    onSuccess: () => {
+      setFarmerPassword({ new_password: "", confirm_password: "" });
+      toast.success("Farmer password updated");
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
+  const resetBuyerPassword = useMutation({
+    mutationFn: async ({ buyerId, newPassword }: { buyerId: string; newPassword: string }) => {
+      const session = getSession();
+      const { data, error } = await supabase.functions.invoke("api-auth/admin/buyer/password", {
+        body: { admin_id: session?.userId, buyer_id: buyerId, new_password: newPassword },
+      });
+      if (error || data?.error) throw new Error(data?.error || error?.message || "Failed to reset buyer password");
+    },
+    onSuccess: () => {
+      setBuyerPassword({ new_password: "", confirm_password: "" });
+      toast.success("Buyer password updated");
+    },
+    onError: (error) => toast.error(error.message),
+  });
+
   const updateBooking = useMutation({
     mutationFn: async ({ id, farmerId, status }: { id: string; farmerId: string; status: "approved" | "rejected" }) => {
       const session = getSession();
@@ -172,6 +210,7 @@ const AdminDashboard = () => {
 
   const openEditFarmer = (f: DbTables<"farmers">) => {
     setFarmerForm({ full_name: f.full_name, phone_number: f.phone_number, email: f.email || "", county: f.county, ward: f.ward, specific_location: f.specific_location, potato_variety: f.potato_variety, acreage_planted: f.acreage_planted });
+    setFarmerPassword({ new_password: "", confirm_password: "" });
     setEditingFarmer(f);
   };
 
@@ -183,6 +222,7 @@ const AdminDashboard = () => {
 
   const openEditBuyer = (b: DbTables<"buyers">) => {
     setBuyerFormState({ buyer_name: b.buyer_name, phone_number: b.phone_number, email: b.email, county: b.county });
+    setBuyerPassword({ new_password: "", confirm_password: "" });
     setEditingBuyer(b);
   };
 
@@ -196,13 +236,62 @@ const AdminDashboard = () => {
     setEditingBuyer(null);
   };
 
-  const filteredFarmers = useMemo(() => farmers.filter((f) => {
-    const q = farmerFilters.search.trim().toLowerCase();
-    if (q && !(f.farmer_id?.toLowerCase().includes(q) || f.full_name?.toLowerCase().includes(q) || f.phone_number?.toLowerCase().includes(q))) return false;
-    if (farmerFilters.status !== "all" && f.registration_status !== farmerFilters.status) return false;
-    if (farmerFilters.county !== "all" && f.county !== farmerFilters.county) return false;
-    return true;
-  }), [farmers, farmerFilters]);
+  const saveFarmerPassword = () => {
+    if (!editingFarmer) return;
+    if (farmerPassword.new_password.length < 8) {
+      toast.error("Password must be at least 8 characters");
+      return;
+    }
+    if (farmerPassword.new_password !== farmerPassword.confirm_password) {
+      toast.error("Passwords do not match");
+      return;
+    }
+    resetFarmerPassword.mutate({ farmerId: editingFarmer.id, newPassword: farmerPassword.new_password });
+  };
+
+  const saveBuyerPassword = () => {
+    if (!editingBuyer) return;
+    if (buyerPassword.new_password.length < 8) {
+      toast.error("Password must be at least 8 characters");
+      return;
+    }
+    if (buyerPassword.new_password !== buyerPassword.confirm_password) {
+      toast.error("Passwords do not match");
+      return;
+    }
+    resetBuyerPassword.mutate({ buyerId: editingBuyer.id, newPassword: buyerPassword.new_password });
+  };
+
+  const getFarmerHarvestTime = (farmer: DbTables<"farmers">) => {
+    const harvest = getEstimatedHarvest(farmer.planting_date, farmer.potato_variety);
+    return Number.isNaN(harvest.getTime()) ? Number.MAX_SAFE_INTEGER : harvest.getTime();
+  };
+
+  const toggleFarmerHarvestSort = () => {
+    setFarmerSort((current) => ({
+      field: "estimated_harvest",
+      direction: current.field === "estimated_harvest" && current.direction === "asc" ? "desc" : "asc",
+    }));
+  };
+
+  const filteredFarmers = useMemo(() => {
+    const next = farmers.filter((f) => {
+      const q = farmerFilters.search.trim().toLowerCase();
+      if (q && !(f.farmer_id?.toLowerCase().includes(q) || f.full_name?.toLowerCase().includes(q) || f.phone_number?.toLowerCase().includes(q))) return false;
+      if (farmerFilters.status !== "all" && f.registration_status !== farmerFilters.status) return false;
+      if (farmerFilters.county !== "all" && f.county !== farmerFilters.county) return false;
+      return true;
+    });
+
+    if (farmerSort.field === "estimated_harvest") {
+      next.sort((a, b) => {
+        const diff = getFarmerHarvestTime(a) - getFarmerHarvestTime(b);
+        return farmerSort.direction === "asc" ? diff : -diff;
+      });
+    }
+
+    return next;
+  }, [farmers, farmerFilters, farmerSort]);
 
   const filteredBookings = useMemo(() => bookings.filter((b: any) => {
     const q = bookingFilters.search.trim().toLowerCase();
@@ -405,7 +494,18 @@ const AdminDashboard = () => {
                     <TableHead>County / Ward</TableHead>
                     <TableHead>Variety</TableHead>
                     <TableHead>Acreage</TableHead>
-                    <TableHead>Est. Harvest</TableHead>
+                    <TableHead>
+                      <Button variant="ghost" size="sm" className="h-8 px-2" onClick={toggleFarmerHarvestSort}>
+                        Est. Harvest
+                        {farmerSort.field !== "estimated_harvest" ? (
+                          <ArrowUpDown className="ml-1 h-3 w-3" />
+                        ) : farmerSort.direction === "asc" ? (
+                          <ArrowUp className="ml-1 h-3 w-3" />
+                        ) : (
+                          <ArrowDown className="ml-1 h-3 w-3" />
+                        )}
+                      </Button>
+                    </TableHead>
                     <TableHead>Fee</TableHead>
                     <TableHead>Payment</TableHead>
                     <TableHead>Status</TableHead>
@@ -707,6 +807,39 @@ const AdminDashboard = () => {
               <Input type="number" min="0.1" step="0.1" value={farmerForm.acreage_planted || ""} onChange={(e) => setFarmerForm((p: any) => ({ ...p, acreage_planted: e.target.value }))} />
             </div>
             <Button className="w-full" onClick={saveEditFarmer}>Save Changes</Button>
+            <div className="border-t pt-4 space-y-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <KeyRound className="h-4 w-4" />
+                Reset Password
+              </div>
+              <div className="space-y-1">
+                <Label>New Password</Label>
+                <Input
+                  type="password"
+                  minLength={8}
+                  value={farmerPassword.new_password}
+                  onChange={(e) => setFarmerPassword((p) => ({ ...p, new_password: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Confirm New Password</Label>
+                <Input
+                  type="password"
+                  minLength={8}
+                  value={farmerPassword.confirm_password}
+                  onChange={(e) => setFarmerPassword((p) => ({ ...p, confirm_password: e.target.value }))}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={saveFarmerPassword}
+                disabled={resetFarmerPassword.isPending}
+              >
+                {resetFarmerPassword.isPending ? "Updating Password..." : "Update Password"}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
@@ -733,6 +866,39 @@ const AdminDashboard = () => {
               <Input value={buyerFormState.county || ""} onChange={(e) => setBuyerFormState((p: any) => ({ ...p, county: e.target.value }))} />
             </div>
             <Button className="w-full" onClick={saveEditBuyer}>Save Changes</Button>
+            <div className="border-t pt-4 space-y-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <KeyRound className="h-4 w-4" />
+                Reset Password
+              </div>
+              <div className="space-y-1">
+                <Label>New Password</Label>
+                <Input
+                  type="password"
+                  minLength={8}
+                  value={buyerPassword.new_password}
+                  onChange={(e) => setBuyerPassword((p) => ({ ...p, new_password: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Confirm New Password</Label>
+                <Input
+                  type="password"
+                  minLength={8}
+                  value={buyerPassword.confirm_password}
+                  onChange={(e) => setBuyerPassword((p) => ({ ...p, confirm_password: e.target.value }))}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={saveBuyerPassword}
+                disabled={resetBuyerPassword.isPending}
+              >
+                {resetBuyerPassword.isPending ? "Updating Password..." : "Update Password"}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>
